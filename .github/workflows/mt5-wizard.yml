@@ -1,4 +1,4 @@
-name: MT5 wizard attempt
+name: MT5 wizard attempt v3
 
 on:
   workflow_dispatch: {}
@@ -16,9 +16,9 @@ jobs:
           Invoke-WebRequest -Uri "https://download.mql5.com/cdn/web/metaquotes.software.corp/mt5/mt5setup.exe" -OutFile mt5setup.exe
           Start-Process -FilePath ".\mt5setup.exe" -ArgumentList "/auto" -Wait
           Start-Process -FilePath "C:\Program Files\MetaTrader 5\terminal64.exe" -ArgumentList "/portable"
-          Start-Sleep -Seconds 60
+          Start-Sleep -Seconds 75
 
-      - name: Screenshot helper + wizard attempt
+      - name: Drive the Open Account wizard
         shell: pwsh
         run: |
           Add-Type -AssemblyName System.Windows.Forms,System.Drawing
@@ -30,20 +30,23 @@ jobs:
             $bmp.Save("$PWD\$name.png", [System.Drawing.Imaging.ImageFormat]::Png)
             $g.Dispose(); $bmp.Dispose()
           }
-          Shot "step1-booted"
+          Shot "v3-1-dialog"
           $ws = New-Object -ComObject WScript.Shell
-          $null = $ws.AppActivate("MetaTrader 5")
+          $null = $ws.AppActivate("Open an Account")
           Start-Sleep -Seconds 2
-          Shot "step2-focused"
-          $ws.SendKeys("%f")
-          Start-Sleep -Seconds 2
-          Shot "step3-filemenu"
-          $ws.SendKeys("{ESC}")
-          Shot "step4-esc"
+          $ws.SendKeys("Purple")
+          Start-Sleep -Seconds 6
+          Shot "v3-2-typed"
+          $ws.SendKeys("{ENTER}")
+          Start-Sleep -Seconds 10
+          Shot "v3-3-enter"
+          $ws.SendKeys("{DOWN}{ENTER}")
+          Start-Sleep -Seconds 6
+          Shot "v3-4-selected"
 
       - name: Upload screenshots
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: wizard-shots
-          path: "*.png"
+          name: wizard-v3
+          path: "v3-*.png"
