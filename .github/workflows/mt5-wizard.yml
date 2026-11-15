@@ -128,7 +128,7 @@ jobs:
           # evidence battery 2: EnumChildWindows (all descendants, different code path
           # from FindWindowEx which returned zero children in v17)
           $global:ekids = New-Object System.Collections.Generic.List[long]
-          $cbC = [W.N2+EnumProc]{ param($h, $l)
+          $cbC = [W.EnumProc]{ param($h, $l)
             try {
               $global:ekids.Add($h.ToInt64())
             } catch {}
@@ -170,7 +170,7 @@ jobs:
           # evidence battery 3: top-level windows owned by the wizard (owned page
           # dialogs, in case the pages are WS_POPUP siblings rather than children)
           $global:eowned = New-Object System.Collections.Generic.List[long]
-          $cbO = [W.N2+EnumProc]{ param($h, $l)
+          $cbO = [W.EnumProc]{ param($h, $l)
             try {
               if ([W.N2]::GetWindow($h, 4) -eq [IntPtr]::Zero) { return $true }
               if ([W.N2]::GetAncestor($h, 3) -eq $l) { $global:eowned.Add($h.ToInt64()) }
