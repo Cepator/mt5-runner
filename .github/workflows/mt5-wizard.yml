@@ -1,4 +1,4 @@
-name: MT5 wizard attempt v15
+name: MT5 wizard attempt v16
 
 on:
   workflow_dispatch: {}
@@ -18,14 +18,14 @@ jobs:
           Start-Process -FilePath "C:\Program Files\MetaTrader 5\terminal64.exe" -ArgumentList "/portable"
           Start-Sleep -Seconds 75
 
-      - name: Drive wizard to AXSE dialog, dump UIA tree, select demo radio, fill
+      - name: Drive wizard, early arrows (v9 window), UIA via foreground handle, fill
         shell: pwsh
         env:
           PURPLE_PHONE: ${{ secrets.PURPLE_PHONE }}
         run: |
           Add-Type -AssemblyName System.Windows.Forms,System.Drawing
           Add-Type -MemberDefinition '[DllImport("user32.dll")] public static extern bool SetCursorPos(int x, int y); [DllImport("user32.dll")] public static extern void mouse_event(int f, int dx, int dy, int d, int i);' -Name M -Namespace W
-          Add-Type -MemberDefinition '[DllImport("user32.dll")] public static extern IntPtr FindWindowEx(IntPtr parent, IntPtr child, string cls, string win); [DllImport("user32.dll")] public static extern int GetWindowText(IntPtr h, System.Text.StringBuilder sb, int max); [DllImport("user32.dll")] public static extern int GetClassName(IntPtr h, System.Text.StringBuilder sb, int max); [DllImport("user32.dll")] public static extern bool IsWindowVisible(IntPtr h);' -Name W32 -Namespace W
+          Add-Type -MemberDefinition '[DllImport("user32.dll")] public static extern IntPtr FindWindowEx(IntPtr parent, IntPtr child, string cls, string win); [DllImport("user32.dll")] public static extern IntPtr GetForegroundWindow(); [DllImport("user32.dll")] public static extern int GetWindowText(IntPtr h, System.Text.StringBuilder sb, int max); [DllImport("user32.dll")] public static extern int GetClassName(IntPtr h, System.Text.StringBuilder sb, int max); [DllImport("user32.dll")] public static extern bool IsWindowVisible(IntPtr h);' -Name W32 -Namespace W
           Add-Type -AssemblyName UIAutomationClient,UIAutomationTypes
           function Shot($name) {
             $b = [System.Windows.Forms.SystemInformation]::VirtualScreen
@@ -47,51 +47,81 @@ jobs:
           Start-Sleep -Seconds 2
           $ws.SendKeys("Purple")
           Start-Sleep -Seconds 6
-          Shot "v15-1-searched"
+          Shot "v16-1-searched"
           $ws.SendKeys("{ENTER}")
           Start-Sleep -Seconds 8
-          Shot "v15-2-afterenter"
+          Shot "v16-2-afterenter"
           Click 600 241
           Start-Sleep -Seconds 3
-          Shot "v15-3-rowclick"
+          Shot "v16-3-rowclick"
           Click 723 610
-          Start-Sleep -Seconds 8
-          Shot "v15-4-form"
-          # v15. Evidence v13/v14: v13 UIA RootElement.FindAll found NO window named
-          # *Open an Account* (UIA_WINDOW_NOT_FOUND) even though the top-level title is
-          # "Open an Account: AXSE Brokerage Ltd." (v14-f shot) - root enumeration is
-          # broken on this runner, so find the HWND directly and use FromHandle.
-          # Arrow fallbacks are proven dead in the click-driven flow (v13-4==v13-5,
-          # v14-a==v14-b byte-identical): focus sits on Finish after the Next click.
+          # v16 KEY EXPERIMENT: v9 evidence - typed text was swallowed by the radio group
+          # right after the page transition; every v12+ run that waited 8s then shot shows
+          # the focus rect settled on the Finish defbutton. The radio-group focus window
+          # closes within the wait. Fire UP UP EARLY.
+          Start-Sleep -Seconds 2
+          Shot "v16-4a-earlyform"
+          $ws.SendKeys("{UP}")
+          Start-Sleep -Milliseconds 700
+          $ws.SendKeys("{UP}")
+          Start-Sleep -Seconds 1
+          Shot "v16-4b-earlyselected"
+          # v16 UIA entry WITHOUT window enumeration: v13 RootElement.FindAll saw no
+          # windows; v15 FindWindowEx enumeration saw zero visible windows; yet SendKeys
+          # and CopyFromScreen work. GetForegroundWindow returns the wizard hwnd directly
+          # (AppActivate + clicks keep it foreground), and FocusedElement walks UIA from
+          # the focused control up. Both bypass enumeration entirely.
+          $me = [System.Diagnostics.Process]::GetCurrentProcess()
+          Write-Host "DIAG_ME: pid=$($me.Id) session=$($me.SessionId) user=$env:USERNAME"
+          $mt = Get-Process terminal64 -ErrorAction SilentlyContinue | Select-Object -First 1
+          if ($mt) { Write-Host "DIAG_MT5: pid=$($mt.Id) session=$($mt.SessionId) mainHwnd=$($mt.MainWindowHandle) title=[$($mt.MainWindowTitle)]" } else { Write-Host "DIAG_MT5: not found" }
+          $fg = [W.W32]::GetForegroundWindow()
+          $fgT = New-Object System.Text.StringBuilder 512
+          [W.W32]::GetWindowText($fg, $fgT, 512) | Out-Null
+          $fgC = New-Object System.Text.StringBuilder 256
+          [W.W32]::GetClassName($fg, $fgC, 256) | Out-Null
+          Write-Host "DIAG_FG: h=$($fg.ToInt64()) class=[$($fgC.ToString())] title=[$($fgT.ToString())]"
           $wizH = [IntPtr]::Zero
-          $h = [IntPtr]::Zero
-          $wn = 0
-          while ($true) {
-            $h = [W.W32]::FindWindowEx([IntPtr]::Zero, $h, $null, $null)
-            if ($h -eq [IntPtr]::Zero) { break }
-            $wn++
-            if (-not [W.W32]::IsWindowVisible($h)) { continue }
-            $t = New-Object System.Text.StringBuilder 512
-            [W.W32]::GetWindowText($h, $t, 512) | Out-Null
-            $c = New-Object System.Text.StringBuilder 256
-            [W.W32]::GetClassName($h, $c, 256) | Out-Null
-            Write-Host "TOPWIN[$wn]: h=$($h.ToInt64()) class=[$($c.ToString())] title=[$($t.ToString())]"
-            if ($t.ToString() -like "*Open an Account*" -and $wizH -eq [IntPtr]::Zero) { $wizH = $h }
-          }
+          if ($fgT.ToString() -like "*Open an Account*") { $wizH = $fg }
           if ($wizH -eq [IntPtr]::Zero) {
             $h = [IntPtr]::Zero
+            $wn = 0
             while ($true) {
-              $h = [W.W32]::FindWindowEx([IntPtr]::Zero, $h, "#32770", $null)
+              $h = [W.W32]::FindWindowEx([IntPtr]::Zero, $h, $null, $null)
               if ($h -eq [IntPtr]::Zero) { break }
+              $wn++
+              if (-not [W.W32]::IsWindowVisible($h)) { continue }
               $t = New-Object System.Text.StringBuilder 512
               [W.W32]::GetWindowText($h, $t, 512) | Out-Null
-              Write-Host "DIALOG32770: h=$($h.ToInt64()) title=[$($t.ToString())]"
+              $c = New-Object System.Text.StringBuilder 256
+              [W.W32]::GetClassName($h, $c, 256) | Out-Null
+              Write-Host "TOPWIN[$wn]: h=$($h.ToInt64()) class=[$($c.ToString())] title=[$($t.ToString())]"
+              if ($t.ToString() -like "*Open an Account*") { $wizH = $h }
             }
+            Write-Host "TOPWIN_COUNT: $wn"
           }
           Write-Host "WIZHWND: $($wizH.ToInt64())"
           $demo = $null
           $demoSel = $false
           $radioList = @()
+          try {
+            $focused = [System.Windows.Automation.AutomationElement]::FocusedElement
+            $walker = [System.Windows.Automation.TreeWalker]::RawViewWalker
+            $cur = $focused
+            $depth = 0
+            while ($cur -ne $null -and $depth -lt 15) {
+              $n = ""; $cl = ""
+              try { $n = $cur.Current.Name } catch {}
+              try { $cl = $cur.Current.ClassName } catch {}
+              Write-Host "FOCUSCHAIN[$depth]: name=[$n] class=[$cl] runtimeId=$($cur.GetRuntimeId() -join ',')"
+              if ($n -like "*Open an Account*" -and $wizH -eq [IntPtr]::Zero) {
+                try { $wizH = [IntPtr]$cur.Current.NativeWindowHandle } catch {}
+              }
+              $cur = $walker.GetParent($cur)
+              $depth++
+            }
+          } catch { Write-Host "FOCUSCHAIN_ERROR: $($_.Exception.Message)" }
+          Write-Host "WIZHWND2: $($wizH.ToInt64())"
           if ($wizH -ne [IntPtr]::Zero) {
             try {
               $win = [System.Windows.Automation.AutomationElement]::FromHandle($wizH)
@@ -182,15 +212,15 @@ jobs:
             Write-Host "MECH_FOCUS_ARROWS: demoSel=$demoSel"
           }
           if (-not $demoSel) {
-            Write-Host "MECH_RING_CLICK: clicking (211,222) - never tried, exact ring x of the selected-row marker"
+            Write-Host "MECH_RING_CLICK: clicking (211,222)"
             Click 211 222
             Start-Sleep -Seconds 1
-            Shot "v15-5a-ringclick"
+            Shot "v16-5a-ringclick"
             $demoSel = Test-DemoSel
             Write-Host "MECH_RING_CLICK: demoSel=$demoSel"
           }
           if (-not $demoSel) {
-            Write-Host "FALLBACK_KB_CYCLE: TAB wraps Finish to Login (v13-6 proof), SHIFT+TAB back into radio group, UP UP"
+            Write-Host "FALLBACK_KB_CYCLE: TAB then SHIFT+TAB then UP UP"
             $ws.SendKeys("{TAB}")
             Start-Sleep -Milliseconds 500
             $ws.SendKeys("+{TAB}")
@@ -202,7 +232,7 @@ jobs:
             $demoSel = Test-DemoSel
             Write-Host "FALLBACK_KB_CYCLE: demoSel=$demoSel"
           }
-          Shot "v15-5-demoselected"
+          Shot "v16-5-demoselected"
           if ($wizH -ne [IntPtr]::Zero) {
             try {
               $win2 = [System.Windows.Automation.AutomationElement]::FromHandle($wizH)
@@ -232,16 +262,16 @@ jobs:
           $ws.SendKeys("{TAB}")
           $ws.SendKeys("rivet5592@agentmail.to")
           Start-Sleep -Seconds 2
-          Shot "v15-6-typed"
+          Shot "v16-6-typed"
           $ws.SendKeys("{TAB}")
           $ws.SendKeys("{TAB}")
           Start-Sleep -Milliseconds 600
-          Shot "v15-7-phonefocus"
+          Shot "v16-7-phonefocus"
           $digits = "$env:PURPLE_PHONE" -replace "[^0-9]", ""
           $local = $digits.Substring(3)
           $ws.SendKeys($local)
           Start-Sleep -Seconds 2
-          Shot "v15-8-phone-typed"
+          Shot "v16-8-phone-typed"
           # terms checkbox measured at (304,518) on the MetaQuotes demo layout
           # (v8-5-form: terms unchecked blocked Next). AXSE layout unverified; miss is
           # a harmless no-op. Then Next at (727,608).
@@ -249,11 +279,11 @@ jobs:
           Start-Sleep -Seconds 2
           Click 727 608
           Start-Sleep -Seconds 12
-          Shot "v15-9-afternext"
+          Shot "v16-9-afternext"
 
       - name: Upload screenshots
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: wizard-v15
-          path: "v15-*.png"
+          name: wizard-v16
+          path: "v16-*.png"
