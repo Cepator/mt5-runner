@@ -1,4 +1,4 @@
-name: MT5 wizard attempt v14
+name: MT5 wizard attempt v15
 
 on:
   workflow_dispatch: {}
@@ -18,13 +18,15 @@ jobs:
           Start-Process -FilePath "C:\Program Files\MetaTrader 5\terminal64.exe" -ArgumentList "/portable"
           Start-Sleep -Seconds 75
 
-      - name: Drive wizard to AXSE dialog then demo radio and fill
+      - name: Drive wizard to AXSE dialog, dump UIA tree, select demo radio, fill
         shell: pwsh
         env:
           PURPLE_PHONE: ${{ secrets.PURPLE_PHONE }}
         run: |
           Add-Type -AssemblyName System.Windows.Forms,System.Drawing
           Add-Type -MemberDefinition '[DllImport("user32.dll")] public static extern bool SetCursorPos(int x, int y); [DllImport("user32.dll")] public static extern void mouse_event(int f, int dx, int dy, int d, int i);' -Name M -Namespace W
+          Add-Type -MemberDefinition '[DllImport("user32.dll")] public static extern IntPtr FindWindowEx(IntPtr parent, IntPtr child, string cls, string win); [DllImport("user32.dll")] public static extern int GetWindowText(IntPtr h, System.Text.StringBuilder sb, int max); [DllImport("user32.dll")] public static extern int GetClassName(IntPtr h, System.Text.StringBuilder sb, int max); [DllImport("user32.dll")] public static extern bool IsWindowVisible(IntPtr h);' -Name W32 -Namespace W
+          Add-Type -AssemblyName UIAutomationClient,UIAutomationTypes
           function Shot($name) {
             $b = [System.Windows.Forms.SystemInformation]::VirtualScreen
             $bmp = New-Object System.Drawing.Bitmap $b.Width, $b.Height
@@ -45,21 +47,179 @@ jobs:
           Start-Sleep -Seconds 2
           $ws.SendKeys("Purple")
           Start-Sleep -Seconds 6
+          Shot "v15-1-searched"
           $ws.SendKeys("{ENTER}")
           Start-Sleep -Seconds 8
+          Shot "v15-2-afterenter"
           Click 600 241
           Start-Sleep -Seconds 3
+          Shot "v15-3-rowclick"
           Click 723 610
           Start-Sleep -Seconds 8
-          Shot "v14-a-dialog"
-          $ws.SendKeys("{UP}")
-          Start-Sleep -Milliseconds 800
-          $ws.SendKeys("{UP}")
-          Start-Sleep -Seconds 2
-          Shot "v14-b-radio"
-          $null = $ws.AppActivate("Open an Account")
-          Start-Sleep -Seconds 1
+          Shot "v15-4-form"
+          # v15. Evidence v13/v14: v13 UIA RootElement.FindAll found NO window named
+          # *Open an Account* (UIA_WINDOW_NOT_FOUND) even though the top-level title is
+          # "Open an Account: AXSE Brokerage Ltd." (v14-f shot) - root enumeration is
+          # broken on this runner, so find the HWND directly and use FromHandle.
+          # Arrow fallbacks are proven dead in the click-driven flow (v13-4==v13-5,
+          # v14-a==v14-b byte-identical): focus sits on Finish after the Next click.
+          $wizH = [IntPtr]::Zero
+          $h = [IntPtr]::Zero
+          $wn = 0
+          while ($true) {
+            $h = [W.W32]::FindWindowEx([IntPtr]::Zero, $h, $null, $null)
+            if ($h -eq [IntPtr]::Zero) { break }
+            $wn++
+            if (-not [W.W32]::IsWindowVisible($h)) { continue }
+            $t = New-Object System.Text.StringBuilder 512
+            [W.W32]::GetWindowText($h, $t, 512) | Out-Null
+            $c = New-Object System.Text.StringBuilder 256
+            [W.W32]::GetClassName($h, $c, 256) | Out-Null
+            Write-Host "TOPWIN[$wn]: h=$($h.ToInt64()) class=[$($c.ToString())] title=[$($t.ToString())]"
+            if ($t.ToString() -like "*Open an Account*" -and $wizH -eq [IntPtr]::Zero) { $wizH = $h }
+          }
+          if ($wizH -eq [IntPtr]::Zero) {
+            $h = [IntPtr]::Zero
+            while ($true) {
+              $h = [W.W32]::FindWindowEx([IntPtr]::Zero, $h, "#32770", $null)
+              if ($h -eq [IntPtr]::Zero) { break }
+              $t = New-Object System.Text.StringBuilder 512
+              [W.W32]::GetWindowText($h, $t, 512) | Out-Null
+              Write-Host "DIALOG32770: h=$($h.ToInt64()) title=[$($t.ToString())]"
+            }
+          }
+          Write-Host "WIZHWND: $($wizH.ToInt64())"
+          $demo = $null
+          $demoSel = $false
+          $radioList = @()
+          if ($wizH -ne [IntPtr]::Zero) {
+            try {
+              $win = [System.Windows.Automation.AutomationElement]::FromHandle($wizH)
+              Write-Host "UIA_WINDOW_FOUND: name=[$($win.Current.Name)] class=[$($win.Current.ClassName)] pid=$($win.Current.ProcessId)"
+              $ctrls = $win.FindAll([System.Windows.Automation.TreeScope]::Descendants, [System.Windows.Automation.Condition]::TrueCondition)
+              Write-Host "UIA_CONTROL_COUNT: $($ctrls.Count)"
+              $i = 0
+              foreach ($c in $ctrls) {
+                $ct = ""; $nm = ""; $cl = ""; $rc = ""
+                try { $ct = $c.Current.ControlType.ProgrammaticName } catch {}
+                try { $nm = $c.Current.Name } catch {}
+                try { $cl = $c.Current.ClassName } catch {}
+                try { $r = $c.Current.BoundingRectangle; $rc = "({0},{1})-({2},{3})" -f [int]$r.X, [int]$r.Y, ([int]($r.X+$r.Width)), ([int]($r.Y+$r.Height)) } catch {}
+                $sel = ""
+                $hasSIP = $false
+                try { $sp = $c.GetCurrentPattern([System.Windows.Automation.SelectionItemPattern]::Pattern); $sel = $sp.Current.IsSelected; $hasSIP = $true } catch {}
+                $tog = ""
+                try { $tp = $c.GetCurrentPattern([System.Windows.Automation.TogglePattern]::Pattern); $tog = $tp.Current.ToggleState } catch {}
+                $inv = ""
+                try { [void]$c.GetCurrentPattern([System.Windows.Automation.InvokePattern]::Pattern); $inv = "yes" } catch {}
+                Write-Host "UIA[$i]: $ct name=[$nm] class=[$cl] rect=$rc sel=[$sel] toggle=[$tog] invoke=[$inv]"
+                if ($hasSIP) {
+                  $radioList += $c
+                  if ($nm -match "demo|virtual") { $demo = $c; $demoSel = ($sel -eq $true) }
+                }
+                $i++
+              }
+              if ($demo -eq $null -and $radioList.Count -ge 3) {
+                $best = $null
+                $bestY = [double]::MaxValue
+                foreach ($r in $radioList) {
+                  try { $ry = $r.Current.BoundingRectangle.Y; if ($ry -lt $bestY) { $bestY = $ry; $best = $r } } catch {}
+                }
+                $demo = $best
+                Write-Host "DEMO_BY_POSITION: topmost selectable y=$bestY"
+              }
+            } catch { Write-Host "UIA_ERROR: $($_.Exception.Message)" }
+          } else {
+            Write-Host "UIA_WINDOW_NOT_FOUND"
+          }
+          function Test-DemoSel {
+            if ($script:demo -eq $null) { return $false }
+            try {
+              $p = $script:demo.GetCurrentPattern([System.Windows.Automation.SelectionItemPattern]::Pattern)
+              return ($p.Current.IsSelected -eq $true)
+            } catch { return $false }
+          }
+          if (-not $demoSel -and $demo -ne $null) {
+            try {
+              $dp = $demo.GetCurrentPattern([System.Windows.Automation.SelectionItemPattern]::Pattern)
+              $dp.Select()
+              Start-Sleep -Seconds 1
+              $demoSel = Test-DemoSel
+            } catch { Write-Host "MECH_SIP_ERROR: $($_.Exception.Message)" }
+            Write-Host "MECH_SIP: demoSel=$demoSel"
+          }
+          if (-not $demoSel -and $demo -ne $null) {
+            try {
+              $tp2 = $demo.GetCurrentPattern([System.Windows.Automation.TogglePattern]::Pattern)
+              $tp2.Toggle()
+              Start-Sleep -Seconds 1
+              $demoSel = Test-DemoSel
+            } catch { Write-Host "MECH_TOGGLE_ERROR: $($_.Exception.Message)" }
+            Write-Host "MECH_TOGGLE: demoSel=$demoSel"
+          }
+          if (-not $demoSel -and $demo -ne $null) {
+            try {
+              $ip = $demo.GetCurrentPattern([System.Windows.Automation.InvokePattern]::Pattern)
+              $ip.Invoke()
+              Start-Sleep -Seconds 1
+              $demoSel = Test-DemoSel
+            } catch { Write-Host "MECH_INVOKE_ERROR: $($_.Exception.Message)" }
+            Write-Host "MECH_INVOKE: demoSel=$demoSel"
+          }
+          if (-not $demoSel -and $demo -ne $null) {
+            try {
+              $demo.SetFocus()
+              Start-Sleep -Milliseconds 800
+              $demoSel = Test-DemoSel
+              if (-not $demoSel) {
+                $ws.SendKeys("{UP}")
+                Start-Sleep -Milliseconds 700
+                $ws.SendKeys("{UP}")
+                Start-Sleep -Milliseconds 700
+                $demoSel = Test-DemoSel
+              }
+            } catch { Write-Host "MECH_FOCUS_ERROR: $($_.Exception.Message)" }
+            Write-Host "MECH_FOCUS_ARROWS: demoSel=$demoSel"
+          }
+          if (-not $demoSel) {
+            Write-Host "MECH_RING_CLICK: clicking (211,222) - never tried, exact ring x of the selected-row marker"
+            Click 211 222
+            Start-Sleep -Seconds 1
+            Shot "v15-5a-ringclick"
+            $demoSel = Test-DemoSel
+            Write-Host "MECH_RING_CLICK: demoSel=$demoSel"
+          }
+          if (-not $demoSel) {
+            Write-Host "FALLBACK_KB_CYCLE: TAB wraps Finish to Login (v13-6 proof), SHIFT+TAB back into radio group, UP UP"
+            $ws.SendKeys("{TAB}")
+            Start-Sleep -Milliseconds 500
+            $ws.SendKeys("+{TAB}")
+            Start-Sleep -Milliseconds 500
+            $ws.SendKeys("{UP}")
+            Start-Sleep -Milliseconds 700
+            $ws.SendKeys("{UP}")
+            Start-Sleep -Milliseconds 800
+            $demoSel = Test-DemoSel
+            Write-Host "FALLBACK_KB_CYCLE: demoSel=$demoSel"
+          }
+          Shot "v15-5-demoselected"
+          if ($wizH -ne [IntPtr]::Zero) {
+            try {
+              $win2 = [System.Windows.Automation.AutomationElement]::FromHandle($wizH)
+              $ctrls2 = $win2.FindAll([System.Windows.Automation.TreeScope]::Descendants, [System.Windows.Automation.Condition]::TrueCondition)
+              $k = 0
+              foreach ($c in $ctrls2) {
+                try {
+                  $sp = $c.GetCurrentPattern([System.Windows.Automation.SelectionItemPattern]::Pattern)
+                  $r2 = $c.Current.BoundingRectangle
+                  Write-Host ("RADIO_STATE[$k]: [$($c.Current.Name)] selected=$($sp.Current.IsSelected) rect=({0},{1})" -f [int]$r2.X, [int]$r2.Y)
+                } catch {}
+                $k++
+              }
+            } catch { Write-Host "RADIO_STATE_ERROR: $($_.Exception.Message)" }
+          }
           $ws.SendKeys("{TAB}")
+          Start-Sleep -Milliseconds 600
           $ws.SendKeys("Clanker")
           Start-Sleep -Milliseconds 600
           $ws.SendKeys("{TAB}")
@@ -72,24 +232,28 @@ jobs:
           $ws.SendKeys("{TAB}")
           $ws.SendKeys("rivet5592@agentmail.to")
           Start-Sleep -Seconds 2
-          Shot "v14-c-typed"
+          Shot "v15-6-typed"
           $ws.SendKeys("{TAB}")
           $ws.SendKeys("{TAB}")
-          Start-Sleep -Milliseconds 800
-          Shot "v14-d-phonefocus"
+          Start-Sleep -Milliseconds 600
+          Shot "v15-7-phonefocus"
           $digits = "$env:PURPLE_PHONE" -replace "[^0-9]", ""
           $local = $digits.Substring(3)
           $ws.SendKeys($local)
           Start-Sleep -Seconds 2
-          Shot "v14-e-phone"
-          $ws.SendKeys("{TAB}{TAB}{TAB}")
-          $ws.SendKeys("{ENTER}")
-          Start-Sleep -Seconds 10
-          Shot "v14-f-finish"
+          Shot "v15-8-phone-typed"
+          # terms checkbox measured at (304,518) on the MetaQuotes demo layout
+          # (v8-5-form: terms unchecked blocked Next). AXSE layout unverified; miss is
+          # a harmless no-op. Then Next at (727,608).
+          Click 304 518
+          Start-Sleep -Seconds 2
+          Click 727 608
+          Start-Sleep -Seconds 12
+          Shot "v15-9-afternext"
 
       - name: Upload screenshots
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: wizard-v14
-          path: "v14-*.png"
+          name: wizard-v15
+          path: "v15-*.png"
