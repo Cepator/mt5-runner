@@ -1,4 +1,4 @@
-name: MT5 wizard attempt v12
+name: MT5 wizard attempt v13
 
 on:
   workflow_dispatch: {}
@@ -18,13 +18,14 @@ jobs:
           Start-Process -FilePath "C:\Program Files\MetaTrader 5\terminal64.exe" -ArgumentList "/portable"
           Start-Sleep -Seconds 75
 
-      - name: Drive wizard to form and fill it
+      - name: Drive wizard to form, select demo radio (UIA + arrows), fill it
         shell: pwsh
         env:
           PURPLE_PHONE: ${{ secrets.PURPLE_PHONE }}
         run: |
           Add-Type -AssemblyName System.Windows.Forms,System.Drawing
           Add-Type -MemberDefinition '[DllImport("user32.dll")] public static extern bool SetCursorPos(int x, int y); [DllImport("user32.dll")] public static extern void mouse_event(int f, int dx, int dy, int d, int i);' -Name M -Namespace W
+          Add-Type -AssemblyName UIAutomationClient,UIAutomationTypes
           function Shot($name) {
             $b = [System.Windows.Forms.SystemInformation]::VirtualScreen
             $bmp = New-Object System.Drawing.Bitmap $b.Width, $b.Height
@@ -39,31 +40,92 @@ jobs:
             [W.M]::mouse_event(2, 0, 0, 0, 0)
             [W.M]::mouse_event(4, 0, 0, 0, 0)
           }
+          function FindWizard {
+            $root = [System.Windows.Automation.AutomationElement]::RootElement
+            $all = $root.FindAll([System.Windows.Automation.TreeScope]::Children, [System.Windows.Automation.Condition]::TrueCondition)
+            foreach ($w in $all) {
+              if ($w.Current.Name -like "*Open an Account*") { return $w }
+            }
+            return $null
+          }
           $ws = New-Object -ComObject WScript.Shell
           if ($ws.AppActivate("LiveUpdate")) { Start-Sleep -Seconds 2; $ws.SendKeys("{ESC}"); Start-Sleep -Seconds 3 }
           $null = $ws.AppActivate("Open an Account")
           Start-Sleep -Seconds 2
           $ws.SendKeys("Purple")
           Start-Sleep -Seconds 6
-          Shot "v12-1-searched"
+          Shot "v13-1-searched"
           $ws.SendKeys("{ENTER}")
           Start-Sleep -Seconds 8
-          Shot "v12-2-afterenter"
+          Shot "v13-2-afterenter"
           Click 600 241
           Start-Sleep -Seconds 3
-          Shot "v12-3-rowclick"
+          Shot "v13-3-rowclick"
           Click 723 610
           Start-Sleep -Seconds 8
-          Shot "v12-4-form"
-          $null = $ws.AppActivate("Open an Account")
-          Start-Sleep -Seconds 2
-          # v12: click the demo radio CIRCLE itself (measured center (231,222) from v11-4 pixel scan),
-          # then the option label line as backstop. v11 keyboard UP UP failed (focus not on radio group).
-          Click 231 222
-          Start-Sleep -Seconds 3
-          Click 350 222
-          Start-Sleep -Seconds 3
-          Shot "v12-5-demoselected"
+          Shot "v13-4-form"
+          # v13 radio selection. Root cause chain (v9-v12 evidence): keyboard focus sits ON the
+          # radio group at page load (v9: typed letters swallowed by the radio); v11/v12 broke
+          # selection by clicking/AppActivating between load and keypresses, which moved focus
+          # to the dialog (v12 pixel diff: only Finish focus rect vanished). So v13 sends ZERO
+          # clicks/activation between the form shot and the selection attempt.
+          # Mechanism 1: UIA SelectionItemPattern (ground truth + direct select).
+          $win = FindWizard
+          $demoSel = $false
+          if ($win) {
+            Write-Host "UIA_WINDOW_FOUND: $($win.Current.Name)"
+            $ctrls = $win.FindAll([System.Windows.Automation.TreeScope]::Descendants, [System.Windows.Automation.Condition]::TrueCondition)
+            Write-Host "UIA_CONTROL_COUNT: $($ctrls.Count)"
+            $i = 0
+            foreach ($c in $ctrls) {
+              $ct = $c.Current.ControlType.ProgrammaticName
+              $nm = $c.Current.Name
+              $isSel = ""
+              try {
+                $sp = $c.GetCurrentPattern([System.Windows.Automation.SelectionItemPattern]::Pattern)
+                $isSel = $sp.Current.IsSelected
+              } catch {}
+              Write-Host "UIA[$i]: $ct name=[$nm] selected=[$isSel]"
+              if ($nm -match "demo" -and $isSel -ne "") {
+                if ($isSel -eq "True") {
+                  $demoSel = $true
+                  Write-Host "UIA_DEMO_ALREADY_SELECTED"
+                } else {
+                  try {
+                    $sp = $c.GetCurrentPattern([System.Windows.Automation.SelectionItemPattern]::Pattern)
+                    $sp.Select()
+                    Start-Sleep -Seconds 1
+                    $sp2 = $c.GetCurrentPattern([System.Windows.Automation.SelectionItemPattern]::Pattern)
+                    $demoSel = ($sp2.Current.IsSelected -eq $true)
+                    if ($demoSel) { Write-Host "UIA_SELECT_OK: demo radio selected via UIA" } else { Write-Host "UIA_SELECT_FAIL: select did not take" }
+                  } catch { Write-Host "UIA_SELECT_ERROR: $($_.Exception.Message)" }
+                }
+              }
+              $i++
+            }
+          } else { Write-Host "UIA_WINDOW_NOT_FOUND" }
+          # Mechanism 2 fallback: UP UP arrows with focus untouched (v9-proven focus state).
+          if (-not $demoSel) {
+            Write-Host "FALLBACK_ARROWS: sending UP UP with focus untouched"
+            $ws.SendKeys("{UP}")
+            Start-Sleep -Milliseconds 700
+            $ws.SendKeys("{UP}")
+            Start-Sleep -Milliseconds 700
+          }
+          # Ground-truth post-selection state via UIA (log, read-only)
+          $win2 = FindWizard
+          if ($win2) {
+            $ctrls2 = $win2.FindAll([System.Windows.Automation.TreeScope]::Descendants, [System.Windows.Automation.Condition]::TrueCondition)
+            $k = 0
+            foreach ($c in $ctrls2) {
+              try {
+                $sp = $c.GetCurrentPattern([System.Windows.Automation.SelectionItemPattern]::Pattern)
+                Write-Host "RADIO_STATE[$k]: [$($c.Current.Name)] selected=$($sp.Current.IsSelected)"
+              } catch {}
+              $k++
+            }
+          }
+          Shot "v13-5-demoselected"
           $ws.SendKeys("{TAB}")
           Start-Sleep -Milliseconds 600
           $ws.SendKeys("Clanker")
@@ -78,24 +140,28 @@ jobs:
           $ws.SendKeys("{TAB}")
           $ws.SendKeys("rivet5592@agentmail.to")
           Start-Sleep -Seconds 2
-          Shot "v12-6-typed"
+          Shot "v13-6-typed"
           $ws.SendKeys("{TAB}")
           $ws.SendKeys("{TAB}")
           Start-Sleep -Milliseconds 600
-          Shot "v12-7-phonefocus"
+          Shot "v13-7-phonefocus"
           $digits = "$env:PURPLE_PHONE" -replace "[^0-9]", ""
           $local = $digits.Substring(3)
           $ws.SendKeys($local)
           Start-Sleep -Seconds 2
-          Shot "v12-8-phone-typed"
-          # demo form uses Next (middle button, same position as Finish on connect form)
+          Shot "v13-8-phone-typed"
+          # v13: attempt the terms checkbox measured at (304,518) on the MetaQuotes demo layout
+          # (v8-5-form: terms unchecked blocked Next). AXSE layout unverified; a miss is a
+          # harmless no-op click. Then Next at (727,608).
+          Click 304 518
+          Start-Sleep -Seconds 2
           Click 727 608
           Start-Sleep -Seconds 12
-          Shot "v12-9-afternext"
+          Shot "v13-9-afternext"
 
       - name: Upload screenshots
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: wizard-v12
-          path: "v12-*.png"
+          name: wizard-v13
+          path: "v13-*.png"
