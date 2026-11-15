@@ -1,0 +1,39 @@
+name: MT5 demo session
+
+on:
+  workflow_dispatch: {}
+  schedule:
+    - cron: "0 8 * * 1-5"
+
+jobs:
+  mt5:
+    runs-on: windows-latest
+    timeout-minutes: 200
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download and install MT5
+        shell: pwsh
+        run: |
+          Invoke-WebRequest -Uri "https://download.mql5.com/cdn/web/metaquotes.software.corp/mt5/mt5setup.exe" -OutFile mt5setup.exe
+          Start-Process -FilePath ".\mt5setup.exe" -ArgumentList "/auto" -Wait
+          if (-not (Test-Path "C:\Program Files\MetaTrader 5\terminal64.exe")) { throw "install failed: terminal64.exe missing" }
+
+      - name: Boot terminal and verify alive
+        shell: pwsh
+        run: |
+          Start-Process -FilePath "C:\Program Files\MetaTrader 5\terminal64.exe" -ArgumentList "/portable"
+          Start-Sleep -Seconds 90
+          $p = Get-Process terminal64 -ErrorAction SilentlyContinue
+          if (-not $p) { throw "terminal64 not running after 90s" }
+          Add-Content -Path mt5-boot.log -Value "MT5 RUNNING pid=$($p.Id) $(Get-Date -Format o)"
+          Start-Sleep -Seconds 300
+          $p2 = Get-Process terminal64 -ErrorAction SilentlyContinue
+          if ($p2) { Add-Content -Path mt5-boot.log -Value "MT5 STILL ALIVE after 5min pid=$($p2.Id)" } else { Add-Content -Path mt5-boot.log -Value "MT5 EXITED within 5min" }
+
+      - name: Upload logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: mt5-logs
+          path: mt5-boot.log
