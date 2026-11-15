@@ -1,4 +1,4 @@
-name: MT5 wizard attempt v10
+name: MT5 wizard attempt v11
 
 on:
   workflow_dispatch: {}
@@ -45,21 +45,23 @@ jobs:
           Start-Sleep -Seconds 2
           $ws.SendKeys("Purple")
           Start-Sleep -Seconds 6
-          Shot "v10-1-searched"
+          Shot "v11-1-searched"
           $ws.SendKeys("{ENTER}")
           Start-Sleep -Seconds 8
-          Shot "v10-2-afterenter"
+          Shot "v11-2-afterenter"
           Click 600 241
           Start-Sleep -Seconds 3
-          Shot "v10-3-rowclick"
+          Shot "v11-3-rowclick"
           Click 723 610
           Start-Sleep -Seconds 8
-          Shot "v10-4-form"
+          Shot "v11-4-form"
           $null = $ws.AppActivate("Open an Account")
           Start-Sleep -Seconds 2
+          $ws.SendKeys("{UP}{UP}")
+          Start-Sleep -Seconds 3
           Click 211 194
           Start-Sleep -Seconds 4
-          Shot "v10-5-demoradio"
+          Shot "v11-5-demoselected"
           $ws.SendKeys("{TAB}")
           Start-Sleep -Milliseconds 600
           $ws.SendKeys("Clanker")
@@ -74,23 +76,23 @@ jobs:
           $ws.SendKeys("{TAB}")
           $ws.SendKeys("rivet5592@agentmail.to")
           Start-Sleep -Seconds 2
-          Shot "v10-6-typed"
+          Shot "v11-6-typed"
           $ws.SendKeys("{TAB}")
           $ws.SendKeys("{TAB}")
           Start-Sleep -Milliseconds 600
-          Shot "v10-7-phonefocus"
+          Shot "v11-7-phonefocus"
           $digits = "$env:PURPLE_PHONE" -replace "[^0-9]", ""
           $local = $digits.Substring(3)
           $ws.SendKeys($local)
           Start-Sleep -Seconds 2
-          Shot "v10-8-phone-typed"
+          Shot "v11-8-phone-typed"
           Click 727 608
           Start-Sleep -Seconds 12
-          Shot "v10-9-afterfinish"
+          Shot "v11-9-afterfinish"
 
       - name: Upload screenshots
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: wizard-v10
-          path: "v10-*.png"
+          name: wizard-v11
+          path: "v11-*.png"
