@@ -1,4 +1,4 @@
-name: MT5 wizard attempt v8
+name: MT5 wizard attempt v9
 
 on:
   workflow_dispatch: {}
@@ -6,7 +6,7 @@ on:
 jobs:
   mt5:
     runs-on: windows-latest
-    timeout-minutes: 30
+    timeout-minutes: 35
     steps:
       - uses: actions/checkout@v4
 
@@ -18,14 +18,13 @@ jobs:
           Start-Process -FilePath "C:\Program Files\MetaTrader 5\terminal64.exe" -ArgumentList "/portable"
           Start-Sleep -Seconds 75
 
-      - name: Drive wizard to demo form, dump fields, fill from secrets
+      - name: Drive wizard to form and fill it
         shell: pwsh
         env:
           PURPLE_PHONE: ${{ secrets.PURPLE_PHONE }}
         run: |
           Add-Type -AssemblyName System.Windows.Forms,System.Drawing
           Add-Type -MemberDefinition '[DllImport("user32.dll")] public static extern bool SetCursorPos(int x, int y); [DllImport("user32.dll")] public static extern void mouse_event(int f, int dx, int dy, int d, int i);' -Name M -Namespace W
-          Add-Type -AssemblyName UIAutomationClient,UIAutomationTypes
           function Shot($name) {
             $b = [System.Windows.Forms.SystemInformation]::VirtualScreen
             $bmp = New-Object System.Drawing.Bitmap $b.Width, $b.Height
@@ -33,7 +32,6 @@ jobs:
             $g.CopyFromScreen($b.Left, $b.Top, 0, 0, $bmp.Size)
             $bmp.Save("$PWD\$name.png", [System.Drawing.Imaging.ImageFormat]::Png)
             $g.Dispose(); $bmp.Dispose()
-            (Get-FileHash "$PWD\$name.png" -Algorithm MD5).Hash
           }
           function Click($x, $y) {
             [W.M]::SetCursorPos($x, $y) | Out-Null
@@ -41,79 +39,53 @@ jobs:
             [W.M]::mouse_event(2, 0, 0, 0, 0)
             [W.M]::mouse_event(4, 0, 0, 0, 0)
           }
-          # Click then verify the screen actually changed; retry once if not
-          function ClickVerify($x, $y, $name, $prevHash) {
-            Click $x $y
-            Start-Sleep -Seconds 6
-            $h = Shot $name
-            if ($h -eq $prevHash) {
-              Write-Host "CLICK_STUCK at $name, retrying"
-              Click $x $y
-              Start-Sleep -Seconds 6
-              $h = Shot "$name-retry"
-            }
-            return $h
-          }
-          function FindWizard {
-            $root = [System.Windows.Automation.AutomationElement]::RootElement
-            $all = $root.FindAll([System.Windows.Automation.TreeScope]::Children, [System.Windows.Automation.Condition]::TrueCondition)
-            foreach ($w in $all) {
-              if ($w.Current.Name -like "*Open an Account*") { return $w }
-            }
-            return $null
-          }
           $ws = New-Object -ComObject WScript.Shell
-          Shot "v8-1-boot" | Out-Null
           if ($ws.AppActivate("LiveUpdate")) { Start-Sleep -Seconds 2; $ws.SendKeys("{ESC}"); Start-Sleep -Seconds 3 }
           $null = $ws.AppActivate("Open an Account")
-          Start-Sleep -Seconds 30   # let the full broker server list download
+          Start-Sleep -Seconds 2
           $ws.SendKeys("Purple")
+          Start-Sleep -Seconds 6
+          Shot "v9-1-searched"
+          $ws.SendKeys("{ENTER}")
           Start-Sleep -Seconds 8
-          $h3prev = Shot "v8-2-typed"
-          $h3 = ClickVerify 600 241 "v8-3-rowclicked" "FORCE"
-          $h4 = ClickVerify 723 610 "v8-4-type" $h3
-          $h5 = ClickVerify 723 610 "v8-5-form" $h4
-          # UIA dump of the wizard dialog: list every control, fill Edit fields
-          $win = FindWizard
-          if ($win) {
-            Write-Host "UIA_WINDOW_FOUND: $($win.Current.Name)"
-            $ctrls = $win.FindAll([System.Windows.Automation.TreeScope]::Descendants, [System.Windows.Automation.Condition]::TrueCondition)
-            Write-Host "UIA_CONTROL_COUNT: $($ctrls.Count)"
-            $i = 0
-            foreach ($c in $ctrls) {
-              $ct = $c.Current.ControlType.ProgrammaticName
-              $nm = $c.Current.Name
-              $vl = ""
-              try { $vp = $c.GetCurrentPattern([System.Windows.Automation.ValuePattern]::Pattern); $vl = $vp.Current.Value } catch {}
-              Write-Host "UIA[$i]: $ct name=[$nm] value=[$vl]"
-              if ($ct -like "*Edit*" -and $nm) {
-                $fill = $null
-                if ($nm -match "phone|tele") { $fill = $env:PURPLE_PHONE }
-                elseif ($nm -match "mail") { $fill = "purple.demo@example.com" }
-                elseif ($nm -match "^name|your name|full name") { $fill = "Demo User" }
-                if ($fill) {
-                  try {
-                    $vp = $c.GetCurrentPattern([System.Windows.Automation.ValuePattern]::Pattern)
-                    $vp.SetValue($fill)
-                    Write-Host "UIA_FILL_OK: [$nm] set"
-                  } catch {
-                    Write-Host "UIA_FILL_FALLBACK: [$nm] via keyboard"
-                    $c.SetFocus(); Start-Sleep -Milliseconds 500
-                    $ws.SendKeys("^a"); $ws.SendKeys($fill)
-                  }
-                }
-              }
-              $i++
-            }
-          } else {
-            Write-Host "UIA_WINDOW_NOT_FOUND"
-          }
-          Shot "v8-6-filled"
-          ClickVerify 723 610 "v8-7-result" "FORCE"
+          Shot "v9-2-afterenter"
+          Click 600 241
+          Start-Sleep -Seconds 3
+          Shot "v9-3-rowclick"
+          Click 723 610
+          Start-Sleep -Seconds 8
+          Shot "v9-4-form"
+          $null = $ws.AppActivate("Open an Account")
+          Start-Sleep -Seconds 2
+          $ws.SendKeys("Clanker")
+          Start-Sleep -Milliseconds 600
+          $ws.SendKeys("{TAB}")
+          $ws.SendKeys("Cepator")
+          Start-Sleep -Milliseconds 600
+          $ws.SendKeys("{TAB}")
+          $ws.SendKeys("{HOME}+{END}{DEL}")
+          $ws.SendKeys("01/01/1990")
+          Start-Sleep -Milliseconds 600
+          $ws.SendKeys("{TAB}")
+          $ws.SendKeys("rivet5592@agentmail.to")
+          Start-Sleep -Seconds 2
+          Shot "v9-5-names-typed"
+          $ws.SendKeys("{TAB}")
+          $ws.SendKeys("{TAB}")
+          Start-Sleep -Milliseconds 600
+          Shot "v9-6-phonefocus"
+          $digits = "$env:PURPLE_PHONE" -replace "[^0-9]", ""
+          $local = $digits.Substring(3)
+          $ws.SendKeys($local)
+          Start-Sleep -Seconds 2
+          Shot "v9-7-phone-typed"
+          Click 723 700
+          Start-Sleep -Seconds 8
+          Shot "v9-8-afterfinish"
 
       - name: Upload screenshots
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: wizard-v8
-          path: "v8-*.png"
+          name: wizard-v9
+          path: "v9-*.png"
