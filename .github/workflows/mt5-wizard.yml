@@ -1,4 +1,4 @@
-name: MT5 wizard attempt v11
+name: MT5 wizard attempt v12
 
 on:
   workflow_dispatch: {}
@@ -45,23 +45,25 @@ jobs:
           Start-Sleep -Seconds 2
           $ws.SendKeys("Purple")
           Start-Sleep -Seconds 6
-          Shot "v11-1-searched"
+          Shot "v12-1-searched"
           $ws.SendKeys("{ENTER}")
           Start-Sleep -Seconds 8
-          Shot "v11-2-afterenter"
+          Shot "v12-2-afterenter"
           Click 600 241
           Start-Sleep -Seconds 3
-          Shot "v11-3-rowclick"
+          Shot "v12-3-rowclick"
           Click 723 610
           Start-Sleep -Seconds 8
-          Shot "v11-4-form"
+          Shot "v12-4-form"
           $null = $ws.AppActivate("Open an Account")
           Start-Sleep -Seconds 2
-          $ws.SendKeys("{UP}{UP}")
+          # v12: click the demo radio CIRCLE itself (measured center (231,222) from v11-4 pixel scan),
+          # then the option label line as backstop. v11 keyboard UP UP failed (focus not on radio group).
+          Click 231 222
           Start-Sleep -Seconds 3
-          Click 211 194
-          Start-Sleep -Seconds 4
-          Shot "v11-5-demoselected"
+          Click 350 222
+          Start-Sleep -Seconds 3
+          Shot "v12-5-demoselected"
           $ws.SendKeys("{TAB}")
           Start-Sleep -Milliseconds 600
           $ws.SendKeys("Clanker")
@@ -76,23 +78,24 @@ jobs:
           $ws.SendKeys("{TAB}")
           $ws.SendKeys("rivet5592@agentmail.to")
           Start-Sleep -Seconds 2
-          Shot "v11-6-typed"
+          Shot "v12-6-typed"
           $ws.SendKeys("{TAB}")
           $ws.SendKeys("{TAB}")
           Start-Sleep -Milliseconds 600
-          Shot "v11-7-phonefocus"
+          Shot "v12-7-phonefocus"
           $digits = "$env:PURPLE_PHONE" -replace "[^0-9]", ""
           $local = $digits.Substring(3)
           $ws.SendKeys($local)
           Start-Sleep -Seconds 2
-          Shot "v11-8-phone-typed"
+          Shot "v12-8-phone-typed"
+          # demo form uses Next (middle button, same position as Finish on connect form)
           Click 727 608
           Start-Sleep -Seconds 12
-          Shot "v11-9-afterfinish"
+          Shot "v12-9-afternext"
 
       - name: Upload screenshots
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: wizard-v11
-          path: "v11-*.png"
+          name: wizard-v12
+          path: "v12-*.png"
