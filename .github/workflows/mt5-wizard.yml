@@ -96,7 +96,7 @@ jobs:
           Write-Host "WIZHWND: $($wizH.ToInt64())"
           if ($wizH -eq [IntPtr]::Zero) { throw "wizard window not foreground" }
           # overlay check: what window actually owns the point we have been clicking
-          $pt = New-Object W.N2+POINT
+          $pt = New-Object W.POINT
           $pt.X = 211; $pt.Y = 222
           $wfp = [W.N2]::WindowFromPoint($pt)
           $wfpT = New-Object System.Text.StringBuilder 256
@@ -122,7 +122,7 @@ jobs:
             [W.N2]::GetWindowText($childH, $t1, 256) | Out-Null
             $c1 = New-Object System.Text.StringBuilder 256
             [W.N2]::GetClassName($childH, $c1, 256) | Out-Null
-            $r1 = New-Object W.N2+RECT
+            $r1 = New-Object W.RECT
             [void][W.N2]::GetWindowRect($childH, [ref]$r1)
             $vis1 = [W.N2]::IsWindowVisible($childH)
             $chk1 = [W.N2]::SendMessage($childH, 0xF2, [IntPtr]::Zero, [IntPtr]::Zero)
@@ -148,7 +148,7 @@ jobs:
                   [W.N2]::GetWindowText($g2, $t2, 256) | Out-Null
                   $c2 = New-Object System.Text.StringBuilder 256
                   [W.N2]::GetClassName($g2, $c2, 256) | Out-Null
-                  $r2 = New-Object W.N2+RECT
+                  $r2 = New-Object W.RECT
                   [void][W.N2]::GetWindowRect($g2, [ref]$r2)
                   $vis2 = [W.N2]::IsWindowVisible($g2)
                   $chk2 = [W.N2]::SendMessage($g2, 0xF2, [IntPtr]::Zero, [IntPtr]::Zero)
