@@ -11,7 +11,7 @@ jobs:
       - uses: actions/checkout@v4
 
       - name: Install fetcher and pull EURUSD M1 2024
-        shell: pwsh
+        shell: bash
         run: |
           pip install git+https://github.com/Njenjo/histdata-fetcher.git
           python - <<'PY'
