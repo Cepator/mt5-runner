@@ -1,4 +1,4 @@
-name: MT5 wizard attempt v6
+name: MT5 wizard attempt v7
 
 on:
   workflow_dispatch: {}
@@ -18,11 +18,11 @@ jobs:
           Start-Process -FilePath "C:\Program Files\MetaTrader 5\terminal64.exe" -ArgumentList "/portable"
           Start-Sleep -Seconds 75
 
-      - name: Drive wizard with pixel click on Next
+      - name: Drive wizard with mouse click via MemberDefinition
         shell: pwsh
         run: |
           Add-Type -AssemblyName System.Windows.Forms,System.Drawing
-          Add-Type -TypeDefinition "using System.Runtime.InteropServices; public class M { [DllImport(\"user32.dll\")] public static extern bool SetCursorPos(int x, int y); [DllImport(\"user32.dll\")] public static extern void mouse_event(int f, int dx, int dy, int d, int i); }"
+          Add-Type -MemberDefinition '[DllImport("user32.dll")] public static extern bool SetCursorPos(int x, int y); [DllImport("user32.dll")] public static extern void mouse_event(int f, int dx, int dy, int d, int i);' -Name M -Namespace W
           function Shot($name) {
             $b = [System.Windows.Forms.SystemInformation]::VirtualScreen
             $bmp = New-Object System.Drawing.Bitmap $b.Width, $b.Height
@@ -32,30 +32,31 @@ jobs:
             $g.Dispose(); $bmp.Dispose()
           }
           function Click($x, $y) {
-            [M]::SetCursorPos($x, $y) | Out-Null
+            [W.M]::SetCursorPos($x, $y) | Out-Null
             Start-Sleep -Milliseconds 300
-            [M]::mouse_event(2, 0, 0, 0, 0)
-            [M]::mouse_event(4, 0, 0, 0, 0)
+            [W.M]::mouse_event(2, 0, 0, 0, 0)
+            [W.M]::mouse_event(4, 0, 0, 0, 0)
           }
           $ws = New-Object -ComObject WScript.Shell
+          Shot "v7-1-boot"
           if ($ws.AppActivate("LiveUpdate")) { Start-Sleep -Seconds 2; $ws.SendKeys("{ESC}"); Start-Sleep -Seconds 3 }
           $null = $ws.AppActivate("Open an Account")
           Start-Sleep -Seconds 2
           $ws.SendKeys("Purple")
           Start-Sleep -Seconds 5
-          Shot "v6-1-searched"
-          $ws.SendKeys("{ENTER}")
-          Start-Sleep -Seconds 8
-          Shot "v6-2-afterenter"
+          Shot "v7-2-typed"
+          Click 600 241
+          Start-Sleep -Seconds 2
+          Shot "v7-3-rowclicked"
           Click 723 610
           Start-Sleep -Seconds 8
-          Shot "v6-3-afternext"
+          Shot "v7-4-next"
           Start-Sleep -Seconds 5
-          Shot "v6-4-settled"
+          Shot "v7-5-settled"
 
       - name: Upload screenshots
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: wizard-v6
-          path: "v6-*.png"
+          name: wizard-v7
+          path: "v7-*.png"
