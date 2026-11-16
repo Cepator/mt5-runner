@@ -22,6 +22,7 @@ jobs:
         shell: pwsh
         env:
           PURPLE_PHONE: ${{ secrets.PURPLE_PHONE }}
+          AGENTMAIL_API_KEY: ${{ secrets.AGENTMAIL_API_KEY }}
         run: |
           Add-Type -AssemblyName System.Windows.Forms,System.Drawing
           Add-Type -MemberDefinition '[DllImport("user32.dll")] public static extern bool SetCursorPos(int x, int y); [DllImport("user32.dll")] public static extern void mouse_event(int f, int dx, int dy, int d, int i);' -Name M -Namespace W
@@ -1015,6 +1016,7 @@ jobs:
           Start-Sleep -Seconds 20
           Shot "v28-9-result"
           $script:seenLogin = $false; $script:seenPass = $false; $script:seenServer = $false
+          $script:codePage = $false
           try {
             if (-not [W.N2]::IsWindowVisible($wizH)) { throw "wizard handle invalid (WIZARD_GONE pre-result)" }
             $winR = [System.Windows.Automation.AutomationElement]::FromHandle($wizH)
@@ -1026,6 +1028,7 @@ jobs:
               if ($rn -ne "" -and $rn.Length -gt 1) {
                 Write-Host ("RESULT_TEXT[{0}]: {1}" -f $ri, $rn)
                 if ($rn -match "Login|Password|Server|created|Investor") { Write-Host "ACCOUNT_HINT: [$rn]" }
+                if ($rn -match "confirmation code to your email") { $script:codePage = $true; Write-Host "CODE_PAGE_DETECTED: confirmation-code banner in result dump" }
                 if ($rn -match "Login") { $script:seenLogin = $true }
                 if ($rn -match "Password") { $script:seenPass = $true }
                 if ($rn -match "Server") { $script:seenServer = $true }
@@ -1037,6 +1040,111 @@ jobs:
             Write-Host "CREDS_CAPTURED: Login+Password+Server strings all present in result dump - extract values from shots"
           } else { Write-Host "CREDS_CAPTURED: no complete credential trio in result dump" }
           $s3 = Test-Subform "postnext"
+          # PHASE 5 (v30): email confirmation-code page. v29 (run 43943233563)
+          # proved the submit lands on the SAME page with a red banner
+          # "We have sent a confirmation code to your email. Please specify
+          # it.", a focused "Confimation code" input at approx (562..680,
+          # 288..312) with the caret already in it, terms still checked, Next
+          # greyed until the code lands. The code arrives at
+          # rivet5592@agentmail.to ~1s after submit (MetaTrader SendMail,
+          # subject "Email confirmation", body "Use code NNNNNN to confirm").
+          # Fetch the FRESH code via the AgentMail API (stale-mail cutoff 10
+          # min), type it, then resubmit for the credentials page.
+          if ($script:codePage -and [W.N2]::IsWindowVisible($wizH)) {
+            try { [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12 } catch {}
+            $mailCode = ""
+            $mailCutoff = (Get-Date).ToUniversalTime().AddMinutes(-10)
+            try {
+              for ($mt = 0; $mt -lt 6 -and $mailCode -eq ""; $mt++) {
+                if ($mt -gt 0) { Start-Sleep -Seconds 5 }
+                $hdr = @{ Authorization = "Bearer $env:AGENTMAIL_API_KEY" }
+                $ml = Invoke-RestMethod -Uri "https://api.agentmail.to/v0/inboxes/rivet5592@agentmail.to/messages?limit=5" -Headers $hdr -TimeoutSec 30
+                foreach ($mm in $ml.messages) {
+                  if ("$($mm.from)" -notmatch "purple-trading\.com") { continue }
+                  if ("$($mm.subject)" -ne "Email confirmation") { continue }
+                  $mCreated = [datetimeoffset]::Parse("$($mm.created_at)").UtcDateTime
+                  if ($mCreated -lt $mailCutoff) { Write-Host "MAIL_SKIP_STALE: $($mm.created_at)"; continue }
+                  $th = Invoke-RestMethod -Uri "https://api.agentmail.to/v0/threads/$($mm.thread_id)" -Headers $hdr -TimeoutSec 30
+                  $bodyText = ""
+                  foreach ($tm in $th.messages) { $bodyText += " $($tm.html) $($tm.extracted_html)" }
+                  if ($bodyText -match "Use code (\d{4,8}) to confirm") { $mailCode = $Matches[1]; break }
+                }
+                if ($mailCode -eq "") { Write-Host "MAIL_POLL[$mt]: no fresh code yet" }
+              }
+            } catch { Write-Host "MAIL_FETCH_ERROR: $($_.Exception.Message)" }
+            if ($mailCode -ne "") {
+              Write-Host "CODE_FETCHED: len=$($mailCode.Length)"
+              Click 620 301
+              Start-Sleep -Milliseconds 600
+              $ws.SendKeys("^a"); Start-Sleep -Milliseconds 200
+              $ws.SendKeys("{DEL}"); Start-Sleep -Milliseconds 200
+              $ws.SendKeys($mailCode)
+              Start-Sleep -Milliseconds 800
+              $codeBack = Read-At 620 301
+              Write-Host "CODE_READBACK: [$codeBack]"
+              if ("$codeBack" -match "\d{4,8}") { Write-Host "CODE_LANDED: True" }
+              else {
+                Write-Host "CODE_LANDED: False - retry click+type"
+                Click 610 301
+                Start-Sleep -Milliseconds 400
+                $ws.SendKeys($mailCode)
+                Start-Sleep -Milliseconds 600
+                $codeBack = Read-At 620 301
+                Write-Host "CODE_READBACK_RETRY: [$codeBack]"
+              }
+              Shot "v28-9b-code"
+              # Next should enable once the code validates; poll like PHASE 4.
+              $nextEnabled2 = $false
+              try {
+                $winN2 = [System.Windows.Automation.AutomationElement]::FromHandle($wizH)
+                $ctrlsN2 = $winN2.FindAll([System.Windows.Automation.TreeScope]::Descendants, [System.Windows.Automation.Condition]::TrueCondition)
+                foreach ($cn2 in $ctrlsN2) {
+                  $nn2 = ""
+                  try { $nn2 = $cn2.Current.Name } catch {}
+                  if ($nn2 -match "^Next") {
+                    for ($n2 = 0; $n2 -lt 5; $n2++) {
+                      $en2 = $cn2.Current.IsEnabled
+                      Write-Host "NEXT2_ENABLED[$n2]: $en2"
+                      if ($en2) { $nextEnabled2 = $true; break }
+                      Start-Sleep -Seconds 2
+                    }
+                    break
+                  }
+                }
+              } catch { Write-Host "NEXT2_POLL_ERROR: $($_.Exception.Message)" }
+              if (-not $nextEnabled2) { Write-Host "NEXT2_NEVER_ENABLED: clicking anyway for evidence" }
+              if ([W.N2]::IsWindowVisible($wizH)) {
+                $nb2 = Find-Button "submit"
+                if ($nb2 -ne $null) { Write-Host ("BUTTON[codepage-next]: name=[{0}] click=({1},{2})" -f $nb2.name, $nb2.cx, $nb2.cy); Click $nb2.cx $nb2.cy }
+                else { Write-Host "BUTTON[codepage-next]: NOT FOUND, fallback (727,608)"; Click 727 608 }
+                Start-Sleep -Seconds 15
+                Shot "v28-10-final"
+                $script:seenLogin = $false; $script:seenPass = $false; $script:seenServer = $false
+                try {
+                  if (-not [W.N2]::IsWindowVisible($wizH)) { throw "wizard handle invalid (WIZARD_GONE pre-final-dump)" }
+                  $winF = [System.Windows.Automation.AutomationElement]::FromHandle($wizH)
+                  $ctrlsF = $winF.FindAll([System.Windows.Automation.TreeScope]::Descendants, [System.Windows.Automation.Condition]::TrueCondition)
+                  $fi = 0
+                  foreach ($cf in $ctrlsF) {
+                    $fn = ""
+                    try { $fn = $cf.Current.Name } catch {}
+                    if ($fn -ne "" -and $fn.Length -gt 1) {
+                      Write-Host ("FINAL_TEXT[{0}]: {1}" -f $fi, $fn)
+                      if ($fn -match "Login") { $script:seenLogin = $true }
+                      if ($fn -match "Password") { $script:seenPass = $true }
+                      if ($fn -match "Server") { $script:seenServer = $true }
+                    }
+                    $fi++
+                  }
+                } catch { Write-Host "FINAL_DUMP_ERROR: $($_.Exception.Message)" }
+                if ($script:seenLogin -and $script:seenPass -and $script:seenServer) {
+                  Write-Host "CREDS_CAPTURED: Login+Password+Server strings all present after code entry - values in FINAL_TEXT dump and v28-10-final shot"
+                } else {
+                  Write-Host "CODE_PAGE_NEXT_NO_CREDS: no credential trio after code entry - check v28-10-final shot"
+                }
+              } else { Write-Host "WIZARD_GONE: after code entry, before final next click" }
+            } else { Write-Host "CODE_FETCH_FAILED: no fresh confirmation email within poll window - wizard left on code page" }
+          } else { Write-Host "CODE_PAGE_NOT_PRESENT: wizard on other page or gone" }
 
       - name: Upload screenshots
         if: always()
