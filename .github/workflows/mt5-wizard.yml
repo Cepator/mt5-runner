@@ -1,4 +1,4 @@
-name: MT5 wizard attempt v27
+name: MT5 wizard attempt v28
 
 on:
   workflow_dispatch: {}
@@ -78,10 +78,10 @@ jobs:
           Start-Sleep -Seconds 2
           $ws.SendKeys("Purple")
           Start-Sleep -Seconds 6
-          Shot "v27-1-searched"
+          Shot "v28-1-searched"
           $ws.SendKeys("{ENTER}")
           Start-Sleep -Seconds 8
-          Shot "v27-2-afterenter"
+          Shot "v28-2-afterenter"
           # v24: vision on v23-2/3 proved the post-Enter list holds TWO
           # Purple-linked rows: row1 AXSE Brokerage Ltd (link PurpleTradingSC,
           # live-only) and row2 L.F. Investment Limited (link PurpleTrading, the
@@ -118,7 +118,7 @@ jobs:
             Click 600 276
           }
           Start-Sleep -Seconds 3
-          Shot "v27-3-rowclick"
+          Shot "v28-3-rowclick"
           $h2 = (Get-FileHash "$PWD\v27-2-afterenter.png" -Algorithm MD5).Hash
           $h3 = (Get-FileHash "$PWD\v27-3-rowclick.png" -Algorithm MD5).Hash
           Write-Host "ROWCLICK_HASH: equal=$($h2 -eq $h3)"
@@ -126,7 +126,7 @@ jobs:
             Write-Host "ROWCLICK_NOOP: shot unchanged, retry click (500,276)"
             Click 500 276
             Start-Sleep -Seconds 3
-            Shot "v27-3-rowclick2"
+            Shot "v28-3-rowclick2"
           }
           Click 723 610
           # v22 kill shot: v16 FOCUSCHAIN proved keyboard focus lands on a radio pane
@@ -138,7 +138,7 @@ jobs:
           # Button hwnds from the wizard root (FindWindowEx zero children), so the
           # keyboard route is now primary.
           Start-Sleep -Seconds 4
-          Shot "v27-4-form"
+          Shot "v28-4-form"
           $wizH = [IntPtr]::Zero
           $fg = [W.N2]::GetForegroundWindow()
           $fgT = New-Object System.Text.StringBuilder 512
@@ -301,7 +301,7 @@ jobs:
               Start-Sleep -Milliseconds 120
               [W.M3]::keybd_event(0x20, 0, 2, [UIntPtr]::Zero)
               Start-Sleep -Seconds 2
-              Shot "v27-5a-attachspace"
+              Shot "v28-5a-attachspace"
               Dump-RadioChecks "attachspace"
             }
             $chkD = [W.N2]::SendMessage($demoHwnd, 0xF2, [IntPtr]::Zero, [IntPtr]::Zero)
@@ -319,7 +319,7 @@ jobs:
               Write-Host "ATTACH_CLICK: real click at demo center ($dcx,$dcy)"
               Click $dcx $dcy
               Start-Sleep -Seconds 2
-              Shot "v27-5b-attachclick"
+              Shot "v28-5b-attachclick"
               Dump-RadioChecks "attachclick"
             }
             [void][W.M3]::AttachThreadInput($myTid, $mt5Tid, $false)
@@ -333,7 +333,7 @@ jobs:
               [void][W.N2]::GetWindowRect($demoHwnd, [ref]$dR2)
               Click ([int](($dR2.Left + $dR2.Right) / 2)) ([int](($dR2.Top + $dR2.Bottom) / 2))
               Start-Sleep -Seconds 2
-              Shot "v27-5c-plainclick"
+              Shot "v28-5c-plainclick"
               Dump-RadioChecks "plainclick"
             }
           }
@@ -346,7 +346,7 @@ jobs:
             Write-Host "PRIMARY_SPACE: focus already in demo radio band, sending SPACE"
             $ws.SendKeys(" ")
             Start-Sleep -Seconds 2
-            Shot "v27-5a-space"
+            Shot "v28-5a-space"
           } else {
             Write-Host "PRIMARY_UIAFOCUS: focus elsewhere (y=$($f1.y)), UIA SetFocus to demo Button pane"
             try {
@@ -370,7 +370,7 @@ jobs:
                 $f2 = Dump-Focused "postsetfocus"
                 $ws.SendKeys(" ")
                 Start-Sleep -Seconds 2
-                Shot "v27-5a-space"
+                Shot "v28-5a-space"
               } else {
                 Write-Host "PRIMARY_UIAFOCUS: no demo Button pane found under wizard"
               }
@@ -410,13 +410,13 @@ jobs:
             Write-Host "MECH_BM: demoHwnd=$($demoHwnd.ToInt64()) starting ladder"
             [void][W.N2]::SendMessage($demoHwnd, 0xF5, [IntPtr]::Zero, [IntPtr]::Zero)
             Start-Sleep -Seconds 1
-            Shot "v27-5b-bmsend"
+            Shot "v28-5b-bmsend"
             Dump-RadioChecks "postbmsend"
             $c1s = [W.N2]::SendMessage($demoHwnd, 0xF2, [IntPtr]::Zero, [IntPtr]::Zero)
             if ($c1s.ToInt64() -ne 1) {
               [void][W.N2]::PostMessage($demoHwnd, 0xF5, [IntPtr]::Zero, [IntPtr]::Zero)
               Start-Sleep -Seconds 1
-              Shot "v27-5c-bmpost"
+              Shot "v28-5c-bmpost"
               Dump-RadioChecks "postbmpost"
               $c1p = [W.N2]::SendMessage($demoHwnd, 0xF2, [IntPtr]::Zero, [IntPtr]::Zero)
               if ($c1p.ToInt64() -ne 1) {
@@ -429,7 +429,7 @@ jobs:
                 Start-Sleep -Milliseconds 150
                 [void][W.N2]::PostMessage($demoHwnd, 0x202, [IntPtr]::Zero, $lp)
                 Start-Sleep -Seconds 1
-                Shot "v27-5d-lbtn"
+                Shot "v28-5d-lbtn"
                 Dump-RadioChecks "postlbtn"
                 $c1l = [W.N2]::SendMessage($demoHwnd, 0xF2, [IntPtr]::Zero, [IntPtr]::Zero)
                 if ($c1l.ToInt64() -ne 1) {
@@ -442,7 +442,7 @@ jobs:
                     [void][W.N2]::SendMessage($par, 0x111, $wp, $demoHwnd)
                   }
                   Start-Sleep -Seconds 1
-                  Shot "v27-5e-setcheck"
+                  Shot "v28-5e-setcheck"
                   Dump-RadioChecks "postsetcheck"
                 }
               }
@@ -464,21 +464,23 @@ jobs:
                 Write-Host "TERTIARY_TABCYCLE: focus on radio at tab $t, sending SPACE"
                 $ws.SendKeys(" ")
                 Start-Sleep -Seconds 2
-                Shot "v27-5f-tabspace"
+                Shot "v28-5f-tabspace"
                 break
               }
             }
             $s1c = Test-Subform "aftertab"
             $demoOk = $s1c.first
           }
-          Shot "v27-5-demoselected"
+          Shot "v28-5-demoselected"
           $s2 = Test-Subform "final"
           Write-Host "SELECT_RESULT: demoSubform=$($s2.first) loginStill=$($s2.login) radioHwndsFound=$($script:radioHwnds.Count)"
           # v22: v21 proved the personal fields live on the page AFTER Next
           # (postnext firstSeen=True). Flow reordered: advance to page 2 FIRST,
           # then UIA-located fill, then terms by name, then a second advance.
           function Find-Field($pattern) {
-            $winF = [System.Windows.Automation.AutomationElement]::FromHandle($wizH)
+            # v28: guard every FromHandle - v27 died on a destroyed wizard
+            # handle (ParentContainsErrorRecordException, uncaught).
+            try { $winF = [System.Windows.Automation.AutomationElement]::FromHandle($wizH) } catch { Write-Host "FIND_FIELD_ERROR: $($_.Exception.Message)"; return $null }
             $ctrlsF = $winF.FindAll([System.Windows.Automation.TreeScope]::Descendants, [System.Windows.Automation.Condition]::TrueCondition)
             # v24: v23 vision proved every page-2 field exists twice in UIA with
             # the SAME name: label Static (x~175) and input Edit (x~288). The
@@ -510,7 +512,11 @@ jobs:
           # click hit the radio label at (528,222) and the wizard never left page 1.
           # Anchor on Next/Finish only; option labels never qualify.
           function Find-Button($tag) {
-            $winF = [System.Windows.Automation.AutomationElement]::FromHandle($wizH)
+            # v28: v27 died HERE - uncaught FromHandle on the destroyed wizard
+            # handle (ParentContainsErrorRecordException at line 489, exit 1
+            # before v27-9-result ever shot). Guard every entry.
+            if (-not [W.N2]::IsWindowVisible($wizH)) { Write-Host "FIND_BUTTON_GONE: wizard handle invalid"; return $null }
+            try { $winF = [System.Windows.Automation.AutomationElement]::FromHandle($wizH) } catch { Write-Host "FIND_BUTTON_ERROR: $($_.Exception.Message)"; return $null }
             $ctrlsF = $winF.FindAll([System.Windows.Automation.TreeScope]::Descendants, [System.Windows.Automation.Condition]::TrueCondition)
             foreach ($c in $ctrlsF) {
               $nm = ""
@@ -565,7 +571,7 @@ jobs:
           if ($nb1 -ne $null) { Write-Host ("BUTTON[to-page2]: name=[{0}] click=({1},{2})" -f $nb1.name, $nb1.cx, $nb1.cy); Click $nb1.cx $nb1.cy }
           else { Write-Host "BUTTON[to-page2]: NOT FOUND, fallback (727,608)"; Click 727 608 }
           Start-Sleep -Seconds 8
-          Shot "v27-6-page2"
+          Shot "v28-6-page2"
           $sp2 = Test-Subform "page2"
           # v23: verify the page actually turned; reclick Next up to 3 times
           $p2retry = 0
@@ -601,7 +607,7 @@ jobs:
             Start-Sleep -Seconds 4
             Click 600 311
             Start-Sleep -Seconds 3
-            Shot "v27-3b-mqrow"
+            Shot "v28-3b-mqrow"
             Click 723 610
             Start-Sleep -Seconds 8
             $sp2 = Test-Subform "page2mq"
@@ -726,7 +732,7 @@ jobs:
             Start-Sleep -Milliseconds 900
             $dobVal = Read-At 310 258
             Write-Host "DOB_STRATEGY2: [$dobVal]"
-            Shot "v27-7c-dob2"
+            Shot "v28-7c-dob2"
           }
           if (Test-DobErr "poststrat2") {
             Write-Host "DOB_ERROR_STILL: strategy 3 - year first, then month, then day"
@@ -736,10 +742,10 @@ jobs:
             Start-Sleep -Milliseconds 800
             $dobVal = Read-At 310 258
             Write-Host "DOB_STRATEGY3: [$dobVal]"
-            Shot "v27-7c-dob3"
+            Shot "v28-7c-dob3"
           }
           if (Test-DobErr "final") { Write-Host "DOB_ERROR_STILL: all strategies exhausted" } else { Write-Host "DOB_ERROR_GONE: True" }
-          Shot "v27-7-filled"
+          Shot "v28-7-filled"
           # v25: v24 typed "czech" into focus (combo never found by UIA) and the
           # digits piled into First name. Two-pass vision: number box sits right
           # of the combo at x~445+, row y~335. Click it directly; keep the US
@@ -784,6 +790,15 @@ jobs:
           # the number input sits right of the country combo on the label's row.
           $digits = "$env:PURPLE_PHONE" -replace "[^0-9]", ""
           if ($digits.Length -gt 10) { $local = $digits.Substring($digits.Length - 10) } else { $local = $digits }
+          # v28: v27 proved (vision + digits=0 + FromHandle death at 19:28:47Z)
+          # that typing letters into the masked phone NUMBER field destroyed
+          # the whole wizard dialog within seconds. The Czech 0721443778 under
+          # the default +1 NANP country went pink in v26 (NANP forbids a
+          # leading 0), a possible Next blocker. Use a NANP-valid fictional
+          # number (555-01xx reserved range) so the field validates WITHOUT
+          # touching the country combo at all.
+          $local = "2125550142"
+          Write-Host ("PHONE_LOCAL_OVERRIDE: NANP-valid fictional local number, {0} digits, country untouched" -f $local.Length)
           $lblPh = $null
           $ph = $null
           try {
@@ -857,56 +872,22 @@ jobs:
             $gotEm = Read-At 310 301
             Write-Host "EMAIL_RESTORED: [$gotEm]"
           }
-          # v27: vision on v26 showed the number field pink/red with 10
-          # digits under "+1 (Canada)" - NANP numbers cannot start with 0,
-          # so the country mismatches the Czech number. Click the LEFTMOST
-          # same-row candidate (the country combo; v26 picked the rightmost
-          # = the number field), type "Czech", close any list with ESC only
-          # (v23: ENTER fires the default button), then RE-VERIFY digits and
-          # refill if the dropdown interaction wiped them.
-          try {
-            $phCombo = $null
-            foreach ($c3 in $ctrlsPh) {
-              $r3 = $c3.Current.BoundingRectangle
-              $nm3 = ""
-              try { $nm3 = $c3.Current.Name } catch {}
-              if ($r3.Width -gt 40 -and $r3.Height -gt 0) {
-                $cy3 = [int]($r3.Y + $r3.Height / 2)
-                if ([Math]::Abs($cy3 - $lblY) -lt 26 -and ([int]$r3.X) -gt ([int]$lblPh.X + 150) -and ([int]$r3.X) -lt ([int]$lblPh.X + 480)) {
-                  if ($phCombo -eq $null -or ([int]($r3.X)) -lt $phCombo.x) { $phCombo = @{ x = [int]($r3.X); cx = [int]($r3.X + $r3.Width / 2); cy = $cy3; name = $nm3 } }
-                }
-              }
-            }
-            if ($phCombo -ne $null) {
-              Write-Host ("PHONE_COMBO: click=({0},{1}) name=[{2}]" -f $phCombo.cx, $phCombo.cy, $phCombo.name)
-              Click $phCombo.cx $phCombo.cy
-              Start-Sleep -Milliseconds 800
-              $ws.SendKeys("Czech")
-              Start-Sleep -Milliseconds 1200
-              $ws.SendKeys("{ESC}")
-              Start-Sleep -Milliseconds 500
-              $gotC = Read-At $phCombo.cx $phCombo.cy
-              Write-Host "PHONE_COUNTRY: [$gotC]"
-              Shot "v27-7d-country"
-            } else { Write-Host "PHONE_COMBO: no row candidate found" }
-          } catch { Write-Host "PHONE_COUNTRY_ERROR: $($_.Exception.Message)" }
+          # v28: the phone-country attempt is GONE. v27 evidence: the combo
+          # finder matched the phone Edit itself (PHONE_COMBO name=[0721443778]),
+          # "Czech" went into the masked number field, and the wizard was
+          # destroyed within seconds (PHONE_READBACK_POSTCOUNTRY digits=0,
+          # EMAIL_INTACT2 False, v27-7b/7d/8 shots show a bare terminal, every
+          # later FromHandle died with "Unrecognized error"). No country
+          # interaction survives into v28; the NANP-valid local number above
+          # removes the pink-field risk instead.
+          Write-Host "PHONE_COUNTRY_SKIP: v27 destroyed the wizard by typing letters into the phone field; country combo untouched in v28"
           $gotPh2 = Read-At $phx $phy
           $gotPh2N = "$gotPh2" -replace "[^0-9]", ""
-          Write-Host ("PHONE_READBACK_POSTCOUNTRY: digits={0}" -f $gotPh2N.Length)
-          if ($gotPh2N.Length -lt 6) {
-            Write-Host "PHONE_REFILL: digits lost during country pick, retyping"
-            Click $phx $phy
-            Start-Sleep -Milliseconds 400
-            $ws.SendKeys("^a")
-            Start-Sleep -Milliseconds 150
-            $ws.SendKeys("{DEL}")
-            Start-Sleep -Milliseconds 200
-            $ws.SendKeys($local)
-            Start-Sleep -Milliseconds 800
-          }
+          Write-Host ("PHONE_READBACK_POSTFILL: digits={0}" -f $gotPh2N.Length)
           $gotEm2 = Read-At 310 301
           if ("$gotEm2" -match "@") { Write-Host "EMAIL_INTACT2: True" }
-          else { Write-Host "EMAIL_INTACT2: False, restoring"
+          elseif ([W.N2]::IsWindowVisible($wizH)) {
+            Write-Host "EMAIL_INTACT2: False, restoring (wizard alive)"
             Click 310 301
             Start-Sleep -Milliseconds 400
             $ws.SendKeys("^a")
@@ -916,9 +897,9 @@ jobs:
             $ws.SendKeys("rivet5592@agentmail.to")
             Start-Sleep -Milliseconds 800
             Write-Host "EMAIL_RESTORED2: done"
-          }
+          } else { Write-Host "EMAIL_INTACT2: False but wizard handle dead - NO restore typing into the void" }
           Write-Host ("PHONE_FILL: typed {0} digits (value masked)" -f $local.Length)
-          Shot "v27-7b-phone"
+          Shot "v28-7b-phone"
           Dump-RadioChecks "afterfill"
           Write-Host "FILL_COUNT: ok=$fillOk of 4"
           # PHASE 3: terms checkbox. v23: UIA name probe agree|terms|conditions
@@ -979,12 +960,14 @@ jobs:
             Click 292 517
             Start-Sleep -Milliseconds 900
           } else { Write-Host "TERMS_CLICK_ONCE: no blind reclick (nopattern or On)" }
+          if (-not [W.N2]::IsWindowVisible($wizH)) { Write-Host "WIZARD_GONE: before terms verification - evidence only" }
           Dump-RadioChecks "afterterms"
-          Shot "v27-8-terms"
+          Shot "v28-8-terms"
           # PHASE 4: submit and capture the result page
           # v26: name the exact blockers before polling Next. v25's Next stayed
           # greyed on dob+email validation with no record of which errors showed.
           try {
+            if (-not [W.N2]::IsWindowVisible($wizH)) { throw "wizard handle invalid (WIZARD_GONE pre-scan)" }
             $winVe = [System.Windows.Automation.AutomationElement]::FromHandle($wizH)
             $ctrlsVe = $winVe.FindAll([System.Windows.Automation.TreeScope]::Descendants, [System.Windows.Automation.Condition]::TrueCondition)
             $vi = 0
@@ -999,6 +982,7 @@ jobs:
           # Poll IsEnabled up to 10s so the submit click actually advances.
           $nextEnabled = $false
           try {
+            if (-not [W.N2]::IsWindowVisible($wizH)) { throw "wizard handle invalid (WIZARD_GONE pre-poll)" }
             $winN = [System.Windows.Automation.AutomationElement]::FromHandle($wizH)
             $ctrlsN = $winN.FindAll([System.Windows.Automation.TreeScope]::Descendants, [System.Windows.Automation.Condition]::TrueCondition)
             foreach ($cn in $ctrlsN) {
@@ -1016,12 +1000,17 @@ jobs:
             }
           } catch { Write-Host "NEXT_POLL_ERROR: $($_.Exception.Message)" }
           if (-not $nextEnabled) { Write-Host "NEXT_NEVER_ENABLED: submitting anyway for evidence" }
-          $nb = Find-Button "submit"
-          if ($nb -ne $null) { Write-Host ("BUTTON[submit]: name=[{0}] click=({1},{2})" -f $nb.name, $nb.cx, $nb.cy); Click $nb.cx $nb.cy }
-          else { Write-Host "BUTTON[submit]: NOT FOUND, fallback (727,608)"; Click 727 608 }
+          if (-not [W.N2]::IsWindowVisible($wizH)) { Write-Host "WIZARD_GONE: before submit click - no click sent, evidence only" }
+          else {
+            $nb = Find-Button "submit"
+            if ($nb -ne $null) { Write-Host ("BUTTON[submit]: name=[{0}] click=({1},{2})" -f $nb.name, $nb.cx, $nb.cy); Click $nb.cx $nb.cy }
+            else { Write-Host "BUTTON[submit]: NOT FOUND, fallback (727,608)"; Click 727 608 }
+          }
           Start-Sleep -Seconds 20
-          Shot "v27-9-result"
+          Shot "v28-9-result"
+          $script:seenLogin = $false; $script:seenPass = $false; $script:seenServer = $false
           try {
+            if (-not [W.N2]::IsWindowVisible($wizH)) { throw "wizard handle invalid (WIZARD_GONE pre-result)" }
             $winR = [System.Windows.Automation.AutomationElement]::FromHandle($wizH)
             $ctrlsR = $winR.FindAll([System.Windows.Automation.TreeScope]::Descendants, [System.Windows.Automation.Condition]::TrueCondition)
             $ri = 0
@@ -1031,15 +1020,21 @@ jobs:
               if ($rn -ne "" -and $rn.Length -gt 1) {
                 Write-Host ("RESULT_TEXT[{0}]: {1}" -f $ri, $rn)
                 if ($rn -match "Login|Password|Server|created|Investor") { Write-Host "ACCOUNT_HINT: [$rn]" }
+                if ($rn -match "Login") { $script:seenLogin = $true }
+                if ($rn -match "Password") { $script:seenPass = $true }
+                if ($rn -match "Server") { $script:seenServer = $true }
               }
               $ri++
             }
           } catch { Write-Host "RESULT_DUMP_ERROR: $($_.Exception.Message)" }
+          if ($script:seenLogin -and $script:seenPass -and $script:seenServer) {
+            Write-Host "CREDS_CAPTURED: Login+Password+Server strings all present in result dump - extract values from shots"
+          } else { Write-Host "CREDS_CAPTURED: no complete credential trio in result dump" }
           $s3 = Test-Subform "postnext"
 
       - name: Upload screenshots
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: wizard-v27
-          path: "v27-*.png"
+          name: wizard-v28
+          path: "v28-*.png"
