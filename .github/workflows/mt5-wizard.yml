@@ -1,4 +1,4 @@
-name: MT5 wizard attempt v21
+name: MT5 wizard attempt v22
 
 on:
   workflow_dispatch: {}
@@ -78,15 +78,15 @@ jobs:
           Start-Sleep -Seconds 2
           $ws.SendKeys("Purple")
           Start-Sleep -Seconds 6
-          Shot "v21-1-searched"
+          Shot "v22-1-searched"
           $ws.SendKeys("{ENTER}")
           Start-Sleep -Seconds 8
-          Shot "v21-2-afterenter"
+          Shot "v22-2-afterenter"
           Click 600 241
           Start-Sleep -Seconds 3
-          Shot "v21-3-rowclick"
+          Shot "v22-3-rowclick"
           Click 723 610
-          # v21 kill shot: v16 FOCUSCHAIN proved keyboard focus lands on a radio pane
+          # v22 kill shot: v16 FOCUSCHAIN proved keyboard focus lands on a radio pane
           # ~4s after the page transition (FOCUSCHAIN[0] unnamed Button), and the fill
           # TAB map (TAB then Clanker always lands in Login) confirms the focused
           # control TABs straight into the sub-form. Every run typed or sent arrows;
@@ -95,7 +95,7 @@ jobs:
           # Button hwnds from the wizard root (FindWindowEx zero children), so the
           # keyboard route is now primary.
           Start-Sleep -Seconds 4
-          Shot "v21-4-form"
+          Shot "v22-4-form"
           $wizH = [IntPtr]::Zero
           $fg = [W.N2]::GetForegroundWindow()
           $fgT = New-Object System.Text.StringBuilder 512
@@ -231,7 +231,7 @@ jobs:
           # ROUTE B: AttachThreadInput + SetFocus(demo) + keybd_event SPACE, attached
           # real click backstop, EnableWindow if ROUTE A shows the demo pane disabled
           # (v18 verdict route 2, plus the attached-click variant never tried)
-          # v21: whole route guarded - v19 died on a namespace typo AFTER EnableWindow
+          # v22: whole route guarded - v19 died on a namespace typo AFTER EnableWindow
           # succeeded, before any selection attempt could run
           try {
           if ($demoHwnd -ne [IntPtr]::Zero) {
@@ -258,7 +258,7 @@ jobs:
               Start-Sleep -Milliseconds 120
               [W.M3]::keybd_event(0x20, 0, 2, [UIntPtr]::Zero)
               Start-Sleep -Seconds 2
-              Shot "v21-5a-attachspace"
+              Shot "v22-5a-attachspace"
               Dump-RadioChecks "attachspace"
             }
             $chkD = [W.N2]::SendMessage($demoHwnd, 0xF2, [IntPtr]::Zero, [IntPtr]::Zero)
@@ -276,12 +276,12 @@ jobs:
               Write-Host "ATTACH_CLICK: real click at demo center ($dcx,$dcy)"
               Click $dcx $dcy
               Start-Sleep -Seconds 2
-              Shot "v21-5b-attachclick"
+              Shot "v22-5b-attachclick"
               Dump-RadioChecks "attachclick"
             }
             [void][W.M3]::AttachThreadInput($myTid, $mt5Tid, $false)
             Write-Host "DETACH: done"
-            # v21 backstop: now that WS_DISABLED is cleared, a plain unattached real
+            # v22 backstop: now that WS_DISABLED is cleared, a plain unattached real
             # click at the demo center should finally register (v10-v16 clicks were
             # eaten by the disabled bit)
             $chkE = [W.N2]::SendMessage($demoHwnd, 0xF2, [IntPtr]::Zero, [IntPtr]::Zero)
@@ -290,7 +290,7 @@ jobs:
               [void][W.N2]::GetWindowRect($demoHwnd, [ref]$dR2)
               Click ([int](($dR2.Left + $dR2.Right) / 2)) ([int](($dR2.Top + $dR2.Bottom) / 2))
               Start-Sleep -Seconds 2
-              Shot "v21-5c-plainclick"
+              Shot "v22-5c-plainclick"
               Dump-RadioChecks "plainclick"
             }
           }
@@ -303,7 +303,7 @@ jobs:
             Write-Host "PRIMARY_SPACE: focus already in demo radio band, sending SPACE"
             $ws.SendKeys(" ")
             Start-Sleep -Seconds 2
-            Shot "v21-5a-space"
+            Shot "v22-5a-space"
           } else {
             Write-Host "PRIMARY_UIAFOCUS: focus elsewhere (y=$($f1.y)), UIA SetFocus to demo Button pane"
             try {
@@ -327,7 +327,7 @@ jobs:
                 $f2 = Dump-Focused "postsetfocus"
                 $ws.SendKeys(" ")
                 Start-Sleep -Seconds 2
-                Shot "v21-5a-space"
+                Shot "v22-5a-space"
               } else {
                 Write-Host "PRIMARY_UIAFOCUS: no demo Button pane found under wizard"
               }
@@ -367,13 +367,13 @@ jobs:
             Write-Host "MECH_BM: demoHwnd=$($demoHwnd.ToInt64()) starting ladder"
             [void][W.N2]::SendMessage($demoHwnd, 0xF5, [IntPtr]::Zero, [IntPtr]::Zero)
             Start-Sleep -Seconds 1
-            Shot "v21-5b-bmsend"
+            Shot "v22-5b-bmsend"
             Dump-RadioChecks "postbmsend"
             $c1s = [W.N2]::SendMessage($demoHwnd, 0xF2, [IntPtr]::Zero, [IntPtr]::Zero)
             if ($c1s.ToInt64() -ne 1) {
               [void][W.N2]::PostMessage($demoHwnd, 0xF5, [IntPtr]::Zero, [IntPtr]::Zero)
               Start-Sleep -Seconds 1
-              Shot "v21-5c-bmpost"
+              Shot "v22-5c-bmpost"
               Dump-RadioChecks "postbmpost"
               $c1p = [W.N2]::SendMessage($demoHwnd, 0xF2, [IntPtr]::Zero, [IntPtr]::Zero)
               if ($c1p.ToInt64() -ne 1) {
@@ -386,7 +386,7 @@ jobs:
                 Start-Sleep -Milliseconds 150
                 [void][W.N2]::PostMessage($demoHwnd, 0x202, [IntPtr]::Zero, $lp)
                 Start-Sleep -Seconds 1
-                Shot "v21-5d-lbtn"
+                Shot "v22-5d-lbtn"
                 Dump-RadioChecks "postlbtn"
                 $c1l = [W.N2]::SendMessage($demoHwnd, 0xF2, [IntPtr]::Zero, [IntPtr]::Zero)
                 if ($c1l.ToInt64() -ne 1) {
@@ -399,7 +399,7 @@ jobs:
                     [void][W.N2]::SendMessage($par, 0x111, $wp, $demoHwnd)
                   }
                   Start-Sleep -Seconds 1
-                  Shot "v21-5e-setcheck"
+                  Shot "v22-5e-setcheck"
                   Dump-RadioChecks "postsetcheck"
                 }
               }
@@ -421,19 +421,19 @@ jobs:
                 Write-Host "TERTIARY_TABCYCLE: focus on radio at tab $t, sending SPACE"
                 $ws.SendKeys(" ")
                 Start-Sleep -Seconds 2
-                Shot "v21-5f-tabspace"
+                Shot "v22-5f-tabspace"
                 break
               }
             }
             $s1c = Test-Subform "aftertab"
             $demoOk = $s1c.first
           }
-          Shot "v21-5-demoselected"
+          Shot "v22-5-demoselected"
           $s2 = Test-Subform "final"
           Write-Host "SELECT_RESULT: demoSubform=$($s2.first) loginStill=$($s2.login) radioHwndsFound=$($script:radioHwnds.Count)"
-          # v21 fill: the demo form is ACTIVE (v20 vision proved selection + demo
-          # fields). TAB-map typing was blind: DOB garbled, phone Required, terms
-          # unchecked. Locate fields by UIA Name, click rect centers, clear, type.
+          # v22: v21 proved the personal fields live on the page AFTER Next
+          # (postnext firstSeen=True). Flow reordered: advance to page 2 FIRST,
+          # then UIA-located fill, then terms by name, then a second advance.
           function Find-Field($pattern) {
             $winF = [System.Windows.Automation.AutomationElement]::FromHandle($wizH)
             $ctrlsF = $winF.FindAll([System.Windows.Automation.TreeScope]::Descendants, [System.Windows.Automation.Condition]::TrueCondition)
@@ -463,13 +463,21 @@ jobs:
             Start-Sleep -Milliseconds 600
             return $true
           }
+          # PHASE 1: advance from account-type page to the personal-details page
+          $nb1 = Find-Field "^(Next|Finish|Register|Create|Open)"
+          if ($nb1 -ne $null) { Write-Host ("BUTTON[to-page2]: name=[{0}] click=({1},{2})" -f $nb1.name, $nb1.cx, $nb1.cy); Click $nb1.cx $nb1.cy }
+          else { Write-Host "BUTTON[to-page2]: NOT FOUND, fallback (727,608)"; Click 727 608 }
+          Start-Sleep -Seconds 8
+          Shot "v22-6-page2"
+          $sp2 = Test-Subform "page2"
+          Write-Host "PAGE2_STATE: firstSeen=$($sp2.first) loginSeen=$($sp2.login)"
+          # PHASE 2: fill the personal page
           $fillOk = 0
           if (Fill-Field "^First" "Clanker" "firstname") { $fillOk++ }
           if (Fill-Field "^Last" "Cepator" "lastname") { $fillOk++ }
           if (Fill-Field "birth|Born" "01/01/1990" "dob") { $fillOk++ }
           if (Fill-Field "E-?mail" "rivet5592@agentmail.to" "email") { $fillOk++ }
-          Shot "v21-6-typed"
-          # phone: country combo typeahead Czech then number edit via TAB
+          Shot "v22-7-filled"
           $pc = Find-Field "Phone|Mobile|Tel"
           if ($pc -ne $null) {
             Write-Host ("FIELD[phonecombo]: name=[{0}] click=({1},{2})" -f $pc.name, $pc.cx, $pc.cy)
@@ -489,28 +497,39 @@ jobs:
             $ws.SendKeys($local)
             Start-Sleep -Seconds 2
           } else { Write-Host "FIELD[phonecombo]: NOT FOUND" }
-          Shot "v21-7-phone"
+          Shot "v22-7b-phone"
           Dump-RadioChecks "afterfill"
           Write-Host "FILL_COUNT: ok=$fillOk of 4"
-          # terms checkbox at its own left edge (the box sits left of the sentence)
+          # PHASE 3: terms checkbox at its own left edge
           $tc = Find-Field "agree|terms|conditions"
           if ($tc -ne $null) {
             Write-Host ("FIELD[terms]: name=[{0}] boxclick=({1},{2})" -f $tc.name, $tc.lx, $tc.ly)
             Click $tc.lx $tc.ly
             Start-Sleep -Seconds 2
-          } else { Write-Host "FIELD[terms]: NOT FOUND, fallback (304,518)"; Click 304 518; Start-Sleep -Seconds 2 }
-          Shot "v21-8-terms"
-          # advance via the button the page actually shows
-          $nb = Find-Field "^(Next|Finish)"
-          if ($nb -ne $null) { Write-Host ("BUTTON[advance]: name=[{0}] click=({1},{2})" -f $nb.name, $nb.cx, $nb.cy); Click $nb.cx $nb.cy }
-          else { Write-Host "BUTTON[advance]: NOT FOUND, fallback (727,608)"; Click 727 608 }
-          Start-Sleep -Seconds 14
-          Shot "v21-9-afternext"
+          } else { Write-Host "FIELD[terms]: NOT FOUND" }
+          Shot "v22-8-terms"
+          # PHASE 4: submit and capture the result page
+          $nb = Find-Field "^(Next|Finish|Register|Create|Open|Done)"
+          if ($nb -ne $null) { Write-Host ("BUTTON[submit]: name=[{0}] click=({1},{2})" -f $nb.name, $nb.cx, $nb.cy); Click $nb.cx $nb.cy }
+          else { Write-Host "BUTTON[submit]: NOT FOUND, fallback (727,608)"; Click 727 608 }
+          Start-Sleep -Seconds 20
+          Shot "v22-9-result"
+          try {
+            $winR = [System.Windows.Automation.AutomationElement]::FromHandle($wizH)
+            $ctrlsR = $winR.FindAll([System.Windows.Automation.TreeScope]::Descendants, [System.Windows.Automation.Condition]::TrueCondition)
+            $ri = 0
+            foreach ($c in $ctrlsR) {
+              $rn = ""
+              try { $rn = $c.Current.Name } catch {}
+              if ($rn -ne "" -and $rn.Length -gt 1) { Write-Host ("RESULT_TEXT[{0}]: {1}" -f $ri, $rn) }
+              $ri++
+            }
+          } catch { Write-Host "RESULT_DUMP_ERROR: $($_.Exception.Message)" }
           $s3 = Test-Subform "postnext"
 
       - name: Upload screenshots
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: wizard-v21
-          path: "v21-*.png"
+          name: wizard-v22
+          path: "v22-*.png"
