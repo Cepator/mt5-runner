@@ -1,4 +1,4 @@
-name: MT5 wizard attempt v28
+name: MT5 wizard attempt v29
 
 on:
   workflow_dispatch: {}
@@ -119,9 +119,15 @@ jobs:
           }
           Start-Sleep -Seconds 3
           Shot "v28-3-rowclick"
-          $h2 = (Get-FileHash "$PWD\v27-2-afterenter.png" -Algorithm MD5).Hash
-          $h3 = (Get-FileHash "$PWD\v27-3-rowclick.png" -Algorithm MD5).Hash
-          Write-Host "ROWCLICK_HASH: equal=$($h2 -eq $h3)"
+          # v29 fix: v28 died HERE - the v27->v28 shot rename missed these
+          # two literal filenames, Get-FileHash threw on the missing v27-*.png
+          # (GH Actions pwsh = ErrorActionPreference stop) and the run died
+          # at 19:46:04Z before any wizard work. Guard the whole compare.
+          try {
+            $h2 = (Get-FileHash "$PWD\v28-2-afterenter.png" -Algorithm MD5).Hash
+            $h3 = (Get-FileHash "$PWD\v28-3-rowclick.png" -Algorithm MD5).Hash
+            Write-Host "ROWCLICK_HASH: equal=$($h2 -eq $h3)"
+          } catch { Write-Host "ROWCLICK_HASH: unreadable ($($_.Exception.Message)) - treating as changed"; $h2 = "x"; $h3 = "y" }
           if ($h2 -eq $h3) {
             Write-Host "ROWCLICK_NOOP: shot unchanged, retry click (500,276)"
             Click 500 276
