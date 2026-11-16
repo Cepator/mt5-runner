@@ -1050,16 +1050,30 @@ jobs:
           # subject "Email confirmation", body "Use code NNNNNN to confirm").
           # Fetch the FRESH code via the AgentMail API (stale-mail cutoff 10
           # min), type it, then resubmit for the credentials page.
+          # v31 hardening after the v30 dry fire: 2-min poll window (list-API
+          # visibility lag), tag-stripped body match (html <b> around the
+          # code), MAIL_LIST logging, newest-first candidates.
           if ($script:codePage -and [W.N2]::IsWindowVisible($wizH)) {
+            Shot "v28-9a-codepage"
             try { [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12 } catch {}
             $mailCode = ""
             $mailCutoff = (Get-Date).ToUniversalTime().AddMinutes(-10)
             try {
-              for ($mt = 0; $mt -lt 6 -and $mailCode -eq ""; $mt++) {
+              # v31: 24 x 5s polls (~2 min window). v30 proved AgentMail
+              # list-API visibility lag: the fresh 20:08:30Z code email was
+              # still absent from list results at 20:09:15Z (45s+ after
+              # creation), so the old 6-poll window starved.
+              for ($mt = 0; $mt -lt 24 -and $mailCode -eq ""; $mt++) {
                 if ($mt -gt 0) { Start-Sleep -Seconds 5 }
                 $hdr = @{ Authorization = "Bearer $env:AGENTMAIL_API_KEY" }
-                $ml = Invoke-RestMethod -Uri "https://api.agentmail.to/v0/inboxes/rivet5592@agentmail.to/messages?limit=5" -Headers $hdr -TimeoutSec 30
-                foreach ($mm in $ml.messages) {
+                $ml = Invoke-RestMethod -Uri "https://api.agentmail.to/v0/inboxes/rivet5592@agentmail.to/messages?limit=15" -Headers $hdr -TimeoutSec 30
+                # v31: log every listed message. v30's silent from/subject
+                # skips made the starvation undiagnosable from the log.
+                foreach ($mlm in $ml.messages) { Write-Host ("MAIL_LIST[{0}]: subject=[{1}] created={2}" -f $mt, $mlm.subject, $mlm.created_at) }
+                # newest first, so a late-listed fresh email always beats a
+                # 10-min-old one regardless of list ordering.
+                $cands = $ml.messages | Sort-Object -Property { [datetimeoffset]::Parse("$($_.created_at)").UtcDateTime } -Descending
+                foreach ($mm in $cands) {
                   if ("$($mm.from)" -notmatch "purple-trading\.com") { continue }
                   if ("$($mm.subject)" -ne "Email confirmation") { continue }
                   $mCreated = [datetimeoffset]::Parse("$($mm.created_at)").UtcDateTime
@@ -1067,7 +1081,13 @@ jobs:
                   $th = Invoke-RestMethod -Uri "https://api.agentmail.to/v0/threads/$($mm.thread_id)" -Headers $hdr -TimeoutSec 30
                   $bodyText = ""
                   foreach ($tm in $th.messages) { $bodyText += " $($tm.html) $($tm.extracted_html)" }
-                  if ($bodyText -match "Use code (\d{4,8}) to confirm") { $mailCode = $Matches[1]; break }
+                  # v31 CRITICAL fix: v30's regex "Use code (\d{4,8}) to
+                  # confirm" can NEVER match. The real body is html:
+                  # Use code <b>NNNNNN</b> to confirm ... (verified live via
+                  # the API against both 19:52 and 20:08 emails). Strip tags
+                  # first, then tag-gap-tolerant spacing in the match.
+                  $bodyPlain = ($bodyText -replace "<[^>]+>", " ")
+                  if ($bodyPlain -match "Use code\s*(\d{4,8})\s*to confirm") { $mailCode = $Matches[1]; break }
                 }
                 if ($mailCode -eq "") { Write-Host "MAIL_POLL[$mt]: no fresh code yet" }
               }
