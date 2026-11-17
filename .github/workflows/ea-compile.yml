@@ -1,0 +1,37 @@
+name: Compile RivetSkew EA
+
+on:
+  workflow_dispatch: {}
+
+jobs:
+  compile:
+    runs-on: windows-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install MT5
+        shell: pwsh
+        run: |
+          Invoke-WebRequest -Uri "https://download.mql5.com/cdn/web/metaquotes.software.corp/mt5/mt5setup.exe" -OutFile mt5setup.exe
+          Start-Process -FilePath ".\mt5setup.exe" -ArgumentList "/auto" -Wait
+          Test-Path "C:\Program Files\MetaTrader 5\MetaEditor64.exe"
+
+      - name: Compile EA
+        shell: pwsh
+        run: |
+          $mt = "C:\Program Files\MetaTrader 5"
+          Copy-Item RivetSkewEA.mq5 "$mt\MQL5\Experts\" -Force
+          $p = Start-Process -FilePath "$mt\MetaEditor64.exe" -ArgumentList "/compile:`"$mt\MQL5\Experts\RivetSkewEA.mq5`"","/log:`"$mt\MQL5\Experts\compile.log`"" -Wait -PassThru
+          Write-Host "metaeditor exit code $($p.ExitCode)"
+          if (Test-Path "$mt\MQL5\Experts\compile.log") { Get-Content "$mt\MQL5\Experts\compile.log" }
+          if (Test-Path "$mt\MQL5\Experts\RivetSkewEA.ex5") { Write-Host "EX5_OK" } else { Write-Host "EX5_MISSING"; exit 1 }
+
+      - name: Upload ex5
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: rivetskew-ex5
+          path: |
+            C:\Program Files\MetaTrader 5\MQL5\Experts\RivetSkewEA.ex5
+            C:\Program Files\MetaTrader 5\MQL5\Experts\compile.log
