@@ -47,7 +47,10 @@ jobs:
         shell: pwsh
         run: |
           $mt = "C:\Program Files\MetaTrader 5"
-          Start-Process -FilePath "$mt\terminal64.exe" -ArgumentList "/portable"
+          # /skipupdate: LiveUpdate downloaded+patched mid-run on 44124360647 and its Restart modal
+          # then BLOCKED EA OnTimer delivery for the whole 300s poll (quotes kept flowing - network
+          # thread is independent). Prevent the updater from ever engaging during the run.
+          Start-Process -FilePath "$mt\terminal64.exe" -ArgumentList "/portable","/skipupdate"
           Start-Sleep -Seconds 60
           New-Item -ItemType Directory -Force "$mt\MQL5\Experts" | Out-Null
           Copy-Item RivetSkewEA.mq5 "$mt\MQL5\Experts\" -Force
@@ -171,7 +174,7 @@ jobs:
           $ini = "[Common]`nLogin=$env:MT5_DEMO_LOGIN`nPassword=$env:MT5_DEMO_PASSWORD`nServer=$env:MT5_DEMO_SERVER`nProfile=RivetSkew`n"
           $iniPath = "$PWD\mt5login.ini"
           [System.IO.File]::WriteAllText($iniPath, $ini, [System.Text.Encoding]::ASCII)
-          $p = Start-Process -FilePath "$mt\terminal64.exe" -ArgumentList "/portable","/config:$iniPath" -PassThru
+          $p = Start-Process -FilePath "$mt\terminal64.exe" -ArgumentList "/portable","/skipupdate","/config:$iniPath" -PassThru
           Start-Sleep -Seconds 45
           Shot "demo-v3-40s"
           Write-Host "terminal alive: $(-not $p.HasExited)"
@@ -268,12 +271,18 @@ jobs:
           # which can land 2-4 min post-boot (run 44105459198: still pending at the old fixed 95s grab).
           # v3.4: gate window extended to 300s per banked REMEDY B (15:55 MAIN) - first-boot
           # LiveUpdate + 131-file recompile latency measured on run 44118970236 (journal 15:52:48).
+          # v3.5: per-iteration LiveUpdate modal guard (run 44124360647: the Restart/Later modal popped
+          # 3s AFTER the one-shot guard cleared and blocked EA event delivery for the entire poll;
+          # market data kept flowing so nothing else looked wrong) + terminal journal tail diagnostic.
           $pollDeadline = (Get-Date).AddSeconds(300)
           $distinct = 0
           while ((Get-Date) -lt $pollDeadline) {
             Copy-Journals
             $distinct = Read-Distinct-Inits
-            Write-Host "POLL $(Get-Date -Format HH:mm:ss) distinct_inits=$distinct"
+            Dismiss-LiveUpdate 1 | Out-Null
+            $tl = $null
+            if ($script:logPath) { $tl = Get-Content $script:logPath -Tail 1 -ErrorAction SilentlyContinue }
+            Write-Host "POLL $(Get-Date -Format HH:mm:ss) distinct_inits=$distinct tlog=$tl"
             if ($distinct -ge 4) { break }
             Start-Sleep -Seconds 10
           }
@@ -288,8 +297,11 @@ jobs:
           Shot "demo-v3-attached"
 
           $g = @{ init = @(); warn = 99; live = 99; atr = 99; authfail = 99; algoon = 0 }
+          # v3.5 FIX: $script:logPath/$script:elogPath are STRINGS (full paths). v3.4 called
+          # Get-Content $elog.FullName on them -> null -> every final gate count silently zeroed
+          # even when the poll had already seen inits (run 44124360647 Get-Content bind errors).
           if ($elog) {
-            $all = Get-Content $elog.FullName
+            $all = Get-Content $elog
             $g.init = @($all | Select-String 'RivetSkew init (\S+)' | ForEach-Object { $_.Matches[0].Groups[1].Value })
             $g.pending = @($all | Select-String 'gate pending').Count
             $g.warn = @($all | Select-String 'algo trading not enabled').Count
@@ -297,7 +309,7 @@ jobs:
             $g.atr  = @($all | Select-String 'ATR handle failed').Count
           }
           if ($log) {
-            $tall = Get-Content $log.FullName
+            $tall = Get-Content $log
             $g.authfail = @($tall | Select-String 'authorization failed|invalid account|bad login').Count
             $g.algoon = @($tall | Select-String 'automated trading is enabled').Count
           }
