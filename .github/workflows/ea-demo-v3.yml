@@ -27,6 +27,22 @@ jobs:
           Start-Sleep -Seconds 10
           Write-Host "terminal present: $(Test-Path 'C:\Program Files\MetaTrader 5\terminal64.exe')"
 
+      - name: "Rider: hunt bundled MetaTrader5 python wheels (parked-route evidence, never fails run)"
+        shell: pwsh
+        run: |
+          $roots = @("C:\Program Files\MetaTrader 5", "$env:APPDATA\MetaQuotes")
+          $found = @()
+          foreach ($r in $roots) {
+            if (Test-Path $r) {
+              $found += Get-ChildItem $r -Recurse -Filter *.whl -ErrorAction SilentlyContinue
+            }
+          }
+          if ($found) {
+            foreach ($w in $found) { Write-Host "WHEEL_FOUND $($w.FullName) $($w.Length) bytes" }
+          } else {
+            Write-Host "NO_PYTHON_WHEELS (python route stays parked; PyPI 5.0.6231 wheel is the revival path)"
+          }
+
       - name: Prime portable tree then compile EA
         shell: pwsh
         run: |
@@ -250,7 +266,9 @@ jobs:
 
           # Poll for gate pass: template-boot EA inits only AFTER the trade server connects,
           # which can land 2-4 min post-boot (run 44105459198: still pending at the old fixed 95s grab).
-          $pollDeadline = (Get-Date).AddSeconds(240)
+          # v3.4: gate window extended to 300s per banked REMEDY B (15:55 MAIN) - first-boot
+          # LiveUpdate + 131-file recompile latency measured on run 44118970236 (journal 15:52:48).
+          $pollDeadline = (Get-Date).AddSeconds(300)
           $distinct = 0
           while ((Get-Date) -lt $pollDeadline) {
             Copy-Journals
