@@ -117,7 +117,7 @@ jobs:
             $g.Dispose(); $bmp.Dispose()
           }
           $mt = "C:\Program Files\MetaTrader 5"
-          $ini = "[Common]`nLogin=$env:MT5_DEMO_LOGIN`nPassword=$env:MT5_DEMO_PASSWORD`nServer=$env:MT5_DEMO_SERVER`n"
+          $ini = "[Common]`nLogin=$env:MT5_DEMO_LOGIN`nPassword=$env:MT5_DEMO_PASSWORD`nServer=$env:MT5_DEMO_SERVER`nProfile=RivetSkew`n"
           $iniPath = "$PWD\mt5login.ini"
           [System.IO.File]::WriteAllText($iniPath, $ini, [System.Text.Encoding]::ASCII)
           $p = Start-Process -FilePath "$mt\terminal64.exe" -ArgumentList "/portable","/config:$iniPath" -PassThru
@@ -272,9 +272,9 @@ jobs:
           Start-Sleep -Seconds 15
 
           # 4. Evidence + gates
-          $log = Get-ChildItem "$mt\logs" -Filter *.log | Sort-Object LastWriteTime -Descending | Select-Object -First 1
+          $log = Get-ChildItem "$mt\logs" -Filter *.log | Where-Object { $_.Name -match '^\d{8}\.log$' } | Sort-Object LastWriteTime -Descending | Select-Object -First 1
           if ($log) { Copy-Item $log.FullName "$PWD\terminal-journal.log" -Force; Write-Host "journal: $($log.FullName)" } else { Write-Host "NO_TERMINAL_JOURNAL" }
-          $elog = Get-ChildItem "$mt\MQL5\Logs" -Filter *.log -ErrorAction SilentlyContinue | Sort-Object LastWriteTime -Descending | Select-Object -First 1
+          $elog = Get-ChildItem "$mt\MQL5\Logs" -Filter *.log -ErrorAction SilentlyContinue | Where-Object { $_.Name -match '^\d{8}\.log$' } | Sort-Object LastWriteTime -Descending | Select-Object -First 1
           if ($elog) { Copy-Item $elog.FullName "$PWD\experts-journal.log" -Force; Write-Host "experts log: $($elog.FullName)" } else { Write-Host "NO_EXPERTS_JOURNAL" }
           Copy-Item "$mt\MQL5\Experts\compile.log" "$PWD\compile.log" -Force -ErrorAction SilentlyContinue
           Shot "demo-v2-final"
