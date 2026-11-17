@@ -6,7 +6,7 @@ on:
 jobs:
   compile:
     runs-on: windows-latest
-    timeout-minutes: 20
+    timeout-minutes: 25
     steps:
       - uses: actions/checkout@v4
 
@@ -15,13 +15,19 @@ jobs:
         run: |
           Invoke-WebRequest -Uri "https://download.mql5.com/cdn/web/metaquotes.software.corp/mt5/mt5setup.exe" -OutFile mt5setup.exe
           Start-Process -FilePath ".\mt5setup.exe" -ArgumentList "/auto" -Wait
-          Test-Path "C:\Program Files\MetaTrader 5\MetaEditor64.exe"
+          Start-Sleep -Seconds 10
+          Write-Host "terminal present: $(Test-Path 'C:\Program Files\MetaTrader 5\terminal64.exe')"
 
-      - name: Compile EA
+      - name: Prime portable tree then compile
         shell: pwsh
         run: |
           $mt = "C:\Program Files\MetaTrader 5"
+          Start-Process -FilePath "$mt\terminal64.exe" -ArgumentList "/portable"
+          Start-Sleep -Seconds 50
+          New-Item -ItemType Directory -Force "$mt\MQL5\Experts" | Out-Null
           Copy-Item RivetSkewEA.mq5 "$mt\MQL5\Experts\" -Force
+          Stop-Process -Name terminal64 -Force -ErrorAction SilentlyContinue
+          Start-Sleep -Seconds 3
           $p = Start-Process -FilePath "$mt\MetaEditor64.exe" -ArgumentList "/compile:`"$mt\MQL5\Experts\RivetSkewEA.mq5`"","/log:`"$mt\MQL5\Experts\compile.log`"" -Wait -PassThru
           Write-Host "metaeditor exit code $($p.ExitCode)"
           if (Test-Path "$mt\MQL5\Experts\compile.log") { Get-Content "$mt\MQL5\Experts\compile.log" }
