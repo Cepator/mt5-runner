@@ -219,6 +219,35 @@ jobs:
           Write-Host "main handle $mainH focused: $(Focus-Terminal $mainH)"
           $main = [System.Windows.Automation.AutomationElement]::FromHandle($mainH)
 
+          # 0. LiveUpdate guard: MT5 pops 'Welcome to LiveUpdate' (Restart/Later) 2-4 min after boot; it hijacks clicks + keys (proven in v2d tree shot). Poll out to 90s, click Later, verify gone.
+          function Dismiss-LiveUpdate($maxS) {
+            $deadline = (Get-Date).AddSeconds($maxS)
+            while ((Get-Date) -lt $deadline) {
+              $lu = $null
+              foreach ($el in $rootEl.FindAll([System.Windows.Automation.TreeScope]::Descendants, $procCond)) {
+                try { if ($el.Current.Name -match 'LiveUpdate') { $lu = $el; break } } catch {}
+              }
+              if (-not $lu) { return $true }
+              Write-Host "LIVEUPDATE Detected, clicking Later"
+              $later = $null
+              foreach ($el in $lu.FindAll([System.Windows.Automation.TreeScope]::Descendants, [System.Windows.Automation.Condition]::TrueCondition)) {
+                try { if ($el.Current.Name -match 'Later') { $later = $el; break } } catch {}
+              }
+              if ($later) {
+                $done = $false
+                try { ($later.GetCurrentPattern([System.Windows.Automation.InvokePattern]::Pattern)).Invoke(); $done = $true } catch {}
+                if (-not $done) { $pl = Center-Of $later; Click-At $pl.X $pl.Y }
+              } else {
+                try { $lu.SetFocus() } catch {}
+                [W.W4]::keybd_event(0x1B, 0, 0, [UIntPtr]::Zero); [W.W4]::keybd_event(0x1B, 0, 2, [UIntPtr]::Zero)
+              }
+              Start-Sleep -Seconds 3
+            }
+            return $false
+          }
+          $luGone = Dismiss-LiveUpdate 90
+          Write-Host "LIVEUPDATE_CLEARED $luGone"
+
           # 1. Algo Trading: fresh runner install always boots DISABLED -> one deterministic Ctrl+E ON
           Send-Chord 0x45
           Start-Sleep -Seconds 2
@@ -241,7 +270,7 @@ jobs:
           Start-Sleep -Milliseconds 800
           $selOk = $false
           try { $feS = [System.Windows.Automation.AutomationElement]::FocusedElement; if ($feS -and $feS.Current.Name -match 'Expert Advisors') { $selOk = $true; Write-Host "SELECTION_VERIFIED $($feS.Current.Name)" } } catch {}
-          if (-not $selOk) { Write-Host "SELECTION_UNVERIFIED proceeding" }
+          if (-not $selOk) { Write-Host "SELECTION_UNVERIFIED proceeding"; Shot "demo-v2-selfail" }
           # RIGHT expands collapsed node (no-op toggle risk: never dblclick the node)
           [W.W4]::keybd_event(0x27, 0, 0, [UIntPtr]::Zero); [W.W4]::keybd_event(0x27, 0, 2, [UIntPtr]::Zero)
           Start-Sleep -Seconds 2
@@ -284,7 +313,8 @@ jobs:
           $attached = 0
           for ($i = 1; $i -le 4; $i++) {
             Focus-Terminal $mainH | Out-Null
-            Start-Sleep -Milliseconds 500
+            Dismiss-LiveUpdate 8 | Out-Null
+            Start-Sleep -Milliseconds 300
             $ea = Find-In-Scopes 'RivetSkewEA'
             if ($ea) { $eaPt = Center-Of $ea; Write-Host "EA_REFOUND $($eaPt.X),$($eaPt.Y)" }
             DblClick-At $eaPt.X $eaPt.Y
@@ -308,7 +338,15 @@ jobs:
               if ($dname -notmatch 'RivetSkewEA') {
                 Write-Host "DIALOG_REJECT$i name=[$dname]"
                 Shot "demo-v2-fail-dialog$i"
-                [W.W4]::keybd_event(0x1B, 0, 0, [UIntPtr]::Zero); [W.W4]::keybd_event(0x1B, 0, 2, [UIntPtr]::Zero)
+                if ($dname -match 'LiveUpdate') {
+                  $later = $null
+                  foreach ($el in $dlg.FindAll([System.Windows.Automation.TreeScope]::Descendants, [System.Windows.Automation.Condition]::TrueCondition)) {
+                    try { if ($el.Current.Name -match 'Later') { $later = $el; break } } catch {}
+                  }
+                  if ($later) { $pl = Center-Of $later; Click-At $pl.X $pl.Y; Write-Host "LIVEUPDATE later clicked in loop"; Start-Sleep -Seconds 3 }
+                } else {
+                  [W.W4]::keybd_event(0x1B, 0, 0, [UIntPtr]::Zero); [W.W4]::keybd_event(0x1B, 0, 2, [UIntPtr]::Zero)
+                }
                 Start-Sleep -Seconds 2
               } else {
                 Write-Host "DIALOG$i $dname"
