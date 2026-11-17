@@ -1,0 +1,71 @@
+name: RivetSkew python bot (official MT5 API)
+
+# OWNER DIRECTIVE 14:45 2026-11-17: end UI/template attach grinding; official
+# MetaTrader5 Python package does login/data/orders programmatically.
+# Ephemeral runner is safe: SL lives broker-side, each run trails/enters then dies.
+
+on:
+  workflow_dispatch:
+    inputs:
+      entries:
+        description: "1 = allow new entries, 0 = trail management only"
+        default: "1"
+  schedule:
+    - cron: "5 6 * * *"    # daily 06:05 UTC, pre-Sydney open, trails only
+    - cron: "5 22 * * 0"   # Sunday 22:05 UTC, new-week entries
+
+jobs:
+  bot:
+    runs-on: windows-latest
+    timeout-minutes: 30
+    env:
+      MT5_DEMO_LOGIN: ${{ secrets.MT5_DEMO_LOGIN }}
+      MT5_DEMO_PASSWORD: ${{ secrets.MT5_DEMO_PASSWORD }}
+      MT5_DEMO_SERVER: ${{ secrets.MT5_DEMO_SERVER }}
+      ENTRIES: ${{ github.event_name == 'schedule' && github.event.schedule == '5 6 * * *' && '0' || '1' }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install MT5
+        shell: pwsh
+        run: |
+          Invoke-WebRequest -Uri "https://download.mql5.com/cdn/web/metaquotes.software.corp/mt5/mt5setup.exe" -OutFile mt5setup.exe
+          Start-Process -FilePath ".\mt5setup.exe" -ArgumentList "/auto" -Wait
+          Start-Sleep -Seconds 10
+          Write-Host "terminal present: $(Test-Path 'C:\Program Files\MetaTrader 5\terminal64.exe')"
+
+      - name: Boot MT5 portable logged into demo account + one Ctrl+E for algo permission
+        shell: pwsh
+        run: |
+          Add-Type -MemberDefinition '[DllImport("user32.dll")] public static extern void keybd_event(byte vk, byte scan, uint flags, UIntPtr extra);' -Name W1 -Namespace W
+          $mt = "C:\Program Files\MetaTrader 5"
+          $ini = "[Common]`nLogin=$env:MT5_DEMO_LOGIN`nPassword=$env:MT5_DEMO_PASSWORD`nServer=$env:MT5_DEMO_SERVER`n"
+          $iniPath = "$PWD\mt5login.ini"
+          [System.IO.File]::WriteAllText($iniPath, $ini, [System.Text.Encoding]::ASCII)
+          Start-Process -FilePath "$mt\terminal64.exe" -ArgumentList "/portable","/config:$iniPath" | Out-Null
+          Start-Sleep -Seconds 60
+          # single deterministic algo-permission toggle (fresh install always boots OFF; orders fail without it)
+          [W.W1]::keybd_event(0x11, 0, 0, [UIntPtr]::Zero)
+          Start-Sleep -Milliseconds 60
+          [W.W1]::keybd_event(0x45, 0, 0, [UIntPtr]::Zero)
+          Start-Sleep -Milliseconds 60
+          [W.W1]::keybd_event(0x45, 0, 2, [UIntPtr]::Zero)
+          [W.W1]::keybd_event(0x11, 0, 2, [UIntPtr]::Zero)
+          Start-Sleep -Seconds 5
+          Write-Host "terminal64 process: $(if (Get-Process terminal64 -ErrorAction SilentlyContinue) {'alive'} else {'GONE'})"
+
+      - name: Run RivetSkew python bot
+        shell: pwsh
+        run: |
+          python -m pip install MetaTrader5 --quiet
+          python rivetskew_bot.py $env:ENTRIES 2>&1 | Tee-Object -FilePath "$PWD\rivetskew-bot.log"
+          $ok = Select-String -Path "$PWD\rivetskew-bot.log" -Pattern 'RIVETSKEW_PY_OK' -Quiet
+          if ($ok) { Write-Host "PY_BOT_OK" } else { Write-Host "PY_BOT_FAIL"; exit 1 }
+
+      - name: Upload bot log
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: rivetskew-python-log
+          path: rivetskew-bot.log
+          if-no-files-found: warn
