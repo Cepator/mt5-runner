@@ -14,6 +14,7 @@ Run modes (workflow sets ENTRIES):
 Exit codes: 0 ok (incl. market-closed no-ops), 2 demo gate or connect failure.
 """
 import sys
+import os
 import time
 from datetime import datetime, timezone
 
@@ -30,6 +31,7 @@ MAX_LEV = 30.0
 MAX_DD_PCT = 15.0
 DEVIATION = 25
 LOG = []
+MT5_PATH = r"C:\Program Files\MetaTrader 5\terminal64.exe"
 
 def log(msg):
     line = f"{datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M:%SZ')} {msg}"
@@ -39,6 +41,76 @@ def log(msg):
 def bail(code, msg):
     log(f"FATAL {msg}")
     sys.exit(code)
+
+def connect_mt5():
+    """Initialize with explicit terminal path + login credentials, retrying
+    while a freshly installed terminal finishes its first boot: the known
+    failure is (-10005, 'IPC timeout') when python connects before the
+    terminal is fully up (MQL5 forum 447937 pattern)."""
+    login = os.environ.get("MT5_DEMO_LOGIN")
+    password = os.environ.get("MT5_DEMO_PASSWORD")
+    server = os.environ.get("MT5_DEMO_SERVER")
+    last_err = None
+    for attempt in range(1, 7):
+        kwargs = {"path": MT5_PATH}
+        if login and password and server:
+            kwargs.update(login=int(login), password=password, server=server)
+        if mt5.initialize(**kwargs):
+            log(f"mt5.initialize OK on attempt {attempt}, terminal build={mt5.version()}")
+            return
+        last_err = mt5.last_error()
+        log(f"mt5.initialize attempt {attempt}/6 failed, last_error={last_err}")
+        mt5.shutdown()
+        time.sleep(15)
+    bail(2, f"mt5.initialize failed after 6 attempts, last_error={last_err}")
+
+def ensure_algo_allowed():
+    """Fresh terminals boot with algo trading OFF; orders then fail with
+    retcode 10027. Toggle Ctrl+E on the terminal window (focused, not blind)
+    and verify via terminal_info().trade_allowed - deterministic, checked."""
+    for attempt in range(1, 4):
+        term = mt5.terminal_info()
+        if term is not None and term.trade_allowed:
+            log(f"algo trading allowed (checked attempt {attempt})")
+            return
+        log(f"trade_allowed=False (attempt {attempt}), focusing terminal window + Ctrl+E")
+        try:
+            import ctypes
+            user32 = ctypes.windll.user32
+            hits = []
+            def cb(hwnd, _):
+                n = user32.GetWindowTextLengthW(hwnd)
+                if n > 0:
+                    buf = ctypes.create_unicode_buffer(n + 1)
+                    user32.GetWindowTextW(hwnd, buf, n + 1)
+                    if "MetaTrader 5" in buf.value:
+                        hits.append((hwnd, buf.value))
+                return 1
+            proc = ctypes.WINFUNCTYPE(ctypes.c_int, ctypes.c_void_p, ctypes.c_void_p)(cb)
+            user32.EnumWindows(proc, 0)
+            if hits:
+                hwnd, title = hits[0]
+                log(f"terminal window {hwnd:#x} title={title!r}")
+                user32.keybd_event(0x12, 0, 0, 0)  # ALT down loosens the foreground lock
+                user32.SetForegroundWindow(hwnd)
+                user32.keybd_event(0x12, 0, 2, 0)  # ALT up
+                time.sleep(0.5)
+                user32.keybd_event(0x11, 0, 0, 0)  # Ctrl down
+                time.sleep(0.05)
+                user32.keybd_event(0x45, 0, 0, 0)  # E down
+                time.sleep(0.05)
+                user32.keybd_event(0x45, 0, 2, 0)  # E up
+                user32.keybd_event(0x11, 0, 2, 0)  # Ctrl up
+            else:
+                log("WARN no MetaTrader 5 top-level window found for focus")
+        except Exception as exc:
+            log(f"WARN algo toggle error: {exc}")
+        time.sleep(5)
+    term = mt5.terminal_info()
+    if term is None or not term.trade_allowed:
+        bail(2, "algo trading still disabled after 3 toggle attempts; "
+                "orders/trails would be rejected (10027)")
+    log("algo trading enabled after toggle")
 
 def atr_wilder(rates, period=ATR_PERIOD):
     trs = []
@@ -102,11 +174,16 @@ def main():
     entries_on = sys.argv[1] == "1" if len(sys.argv) > 1 else True
     log(f"RivetSkew python bot start, entries={'ON' if entries_on else 'OFF (trail-only)'}")
 
-    if not mt5.initialize():
-        bail(2, f"mt5.initialize failed, last_error={mt5.last_error()}")
-    log(f"mt5.initialize OK, terminal build={mt5.version()}")
+    connect_mt5()
+    ensure_algo_allowed()
 
     acc = mt5.account_info()
+    for _ in range(4):
+        if acc is not None:
+            break
+        log("account_info None, waiting for login to complete")
+        time.sleep(5)
+        acc = mt5.account_info()
     if acc is None:
         bail(2, f"account_info None after initialize, last_error={mt5.last_error()}")
     log(f"ACCOUNT login={acc.login} server={acc.server} name={acc.name!r} "

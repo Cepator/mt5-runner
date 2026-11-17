@@ -43,7 +43,7 @@ jobs:
           $iniPath = "$PWD\mt5login.ini"
           [System.IO.File]::WriteAllText($iniPath, $ini, [System.Text.Encoding]::ASCII)
           Start-Process -FilePath "$mt\terminal64.exe" -ArgumentList "/portable","/config:$iniPath" | Out-Null
-          Start-Sleep -Seconds 60
+          Start-Sleep -Seconds 90
           # single deterministic algo-permission toggle (fresh install always boots OFF; orders fail without it)
           [W.W1]::keybd_event(0x11, 0, 0, [UIntPtr]::Zero)
           Start-Sleep -Milliseconds 60
