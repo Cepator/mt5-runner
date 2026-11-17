@@ -59,42 +59,44 @@ jobs:
           $i = 1
           foreach ($s in $syms) {
             $id = [string](132000000000000000 + $i * 111111)
-            $txt = @"
-<chart>
-id=$id
-symbol=$s
-period_type=2
-period_size=1
-scale=4
-mode=1
-grid=1
-scroll=1
-window_type=1
-
-<window>
-height=100
-
-<indicator>
-name=Main
-path=
-apply=1
-show_data=1
-scale_inherit=0
-scale_line=0
-scale_line_percent=50
-scale_line_value=0.000000
-scale_fix_min=0
-scale_fix_min_val=0.000000
-scale_fix_max=0
-scale_fix_max_val=0.000000
-</indicator>
-</window>
-</chart>
-"@
+            $L = @(
+              '<chart>',
+              "id=$id",
+              "symbol=$s",
+              'period_type=2',
+              'period_size=1',
+              'scale=4',
+              'mode=1',
+              'grid=1',
+              'scroll=1',
+              'window_type=1',
+              '',
+              '<window>',
+              'height=100',
+              '',
+              '<indicator>',
+              'name=Main',
+              'path=',
+              'apply=1',
+              'show_data=1',
+              'scale_inherit=0',
+              'scale_line=0',
+              'scale_line_percent=50',
+              'scale_line_value=0.000000',
+              'scale_fix_min=0',
+              'scale_fix_min_val=0.000000',
+              'scale_fix_max=0',
+              'scale_fix_max_val=0.000000',
+              '</indicator>',
+              '</window>',
+              '</chart>',
+              ''
+            )
+            $txt = $L -join "`r`n"
             [System.IO.File]::WriteAllText("$prof\chart0$i.chr", $txt, $enc)
             $i++
           }
-          $wnd = "chart01.chr`nchart02.chr`nchart03.chr`nchart04.chr`n"
+          $wnd = "chart01.chr`r`nchart02.chr`r`nchart03.chr`r`nchart04.chr`r`n"
           [System.IO.File]::WriteAllText("$prof\order.wnd", $wnd, $enc)
           $cfg = "$mt\Config"
           New-Item -ItemType Directory -Force $cfg | Out-Null
