@@ -23,12 +23,23 @@ jobs:
         run: |
           $mt = "C:\Program Files\MetaTrader 5"
           Start-Process -FilePath "$mt\terminal64.exe" -ArgumentList "/portable"
-          Start-Sleep -Seconds 50
+          Start-Sleep -Seconds 60
           New-Item -ItemType Directory -Force "$mt\MQL5\Experts" | Out-Null
           Copy-Item RivetSkewEA.mq5 "$mt\MQL5\Experts\" -Force
           Stop-Process -Name terminal64 -Force -ErrorAction SilentlyContinue
           Start-Sleep -Seconds 3
-          $p = Start-Process -FilePath "$mt\MetaEditor64.exe" -ArgumentList "/compile:`"$mt\MQL5\Experts\RivetSkewEA.mq5`"","/log:`"$mt\MQL5\Experts\compile.log`"" -Wait -PassThru
+          Write-Host "portable include present: $(Test-Path "$mt\MQL5\Include\Trade\Trade.mqh")"
+          if (-not (Test-Path "$mt\MQL5\Include\Trade\Trade.mqh")) {
+            $roam = Get-ChildItem "$env:APPDATA\MetaQuotes\Terminal" -Directory -ErrorAction SilentlyContinue | Where-Object { Test-Path (Join-Path $_.FullName "MQL5\Include\Trade\Trade.mqh") } | Select-Object -First 1
+            if ($roam) {
+              Copy-Item (Join-Path $roam.FullName "MQL5\Include") "$mt\MQL5\Include" -Recurse -Force
+              Write-Host "include copied from roaming data folder $($roam.Name)"
+            } else {
+              Write-Host "TRADE_MQH_NOWHERE: no tree carries Include\Trade\Trade.mqh"
+            }
+          }
+          Write-Host "include ready: $(Test-Path "$mt\MQL5\Include\Trade\Trade.mqh")"
+          $p = Start-Process -FilePath "$mt\MetaEditor64.exe" -ArgumentList "/portable","/compile:`"$mt\MQL5\Experts\RivetSkewEA.mq5`"","/log:`"$mt\MQL5\Experts\compile.log`"" -Wait -PassThru
           Write-Host "metaeditor exit code $($p.ExitCode)"
           if (Test-Path "$mt\MQL5\Experts\compile.log") { Get-Content "$mt\MQL5\Experts\compile.log" }
           if (Test-Path "$mt\MQL5\Experts\RivetSkewEA.ex5") { Write-Host "EX5_OK" } else { Write-Host "EX5_MISSING"; exit 1 }
