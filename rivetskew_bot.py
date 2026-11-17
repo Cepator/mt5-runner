@@ -53,32 +53,78 @@ def terminal_alive():
     except Exception:
         return True
 
+def journal_tail(lines=5):
+    """Boot ground truth: newest journal in the portable data folder
+    (install dir /logs), secret-redacted. If the module-spawned terminal is
+    healthy there is a YYYYMMDD.log here; only stale metaeditor.log means
+    first-boot is still lazy-finishing or portable mode did not happen."""
+    try:
+        logs_dir = os.path.join(os.path.dirname(MT5_PATH), "logs")
+        if not os.path.isdir(logs_dir):
+            log(f"journal: no logs dir at {logs_dir}")
+            return
+        files = [os.path.join(logs_dir, f) for f in os.listdir(logs_dir)
+                 if f.lower().endswith(".log")]
+        if not files:
+            log("journal: no .log files in portable data folder yet")
+            return
+        newest = max(files, key=os.path.getmtime)
+        with open(newest, "r", errors="replace") as fh:
+            tail = fh.read().splitlines()[-lines:]
+        secrets = [os.environ.get(k, "") for k in
+                   ("MT5_DEMO_LOGIN", "MT5_DEMO_PASSWORD", "MT5_DEMO_SERVER")]
+        log(f"journal tail: {os.path.basename(newest)}")
+        for ln in tail:
+            for s in secrets:
+                if s:
+                    ln = ln.replace(s, "***")
+            log(f"J| {ln}")
+    except Exception as exc:
+        log(f"WARN journal dump error: {exc}")
+
+def kill_stray_terminals():
+    """Ensure NO terminal64 runs before initialize: the module must own the
+    terminal lifecycle (it spawns terminal64 with consistent data-folder
+    semantics). A hand-started instance becomes the attach target, and three
+    runs proved its IPC pipe never opens."""
+    try:
+        import subprocess
+        subprocess.run(["taskkill", "/IM", "terminal64.exe", "/F"],
+                       capture_output=True, timeout=15)
+    except Exception:
+        pass
+    time.sleep(5)
+    log(f"pre-connect cleanup: terminal64 "
+        f"{'STILL ALIVE' if terminal_alive() else 'gone'}")
+
 def connect_mt5():
-    """Initialize with explicit terminal path + PORTABLE MODE + login
-    credentials, retrying while a freshly installed terminal settles. The
-    terminal boots /portable (data folder = install dir); initialize MUST pass
-    portable=True or the module handshakes against the main-mode AppData data
-    folder, empty on a fresh runner, and every attempt dies with
-    (-10005, 'IPC timeout') - root cause of runs 44107726289 + 44111389179
-    (module wheel 5.0.6231: -10005 is the raw handshake timeout; the
-    algo-disabled case is error -8, which we are NOT seeing)."""
+    """v1.3 MODULE-OWNED LIFECYCLE: kill strays, then let initialize() spawn
+    terminal64 itself (path + portable=True + creds + generous timeout) and
+    retry through first-boot latency. Run 44114913418 ground truth: a
+    hand-pre-started portable terminal had NO journal of its own while
+    metaeditor was still compiling first-boot examples minutes after launch
+    (the /auto install finishes lazily; LiveUpdate can add minutes more, cf.
+    v3 run 44105459198 trade-server connect landing 2-4 min post-boot), so
+    attaching to such a terminal is -10005 forever regardless of kwargs."""
+    kill_stray_terminals()
     login = os.environ.get("MT5_DEMO_LOGIN")
     password = os.environ.get("MT5_DEMO_PASSWORD")
     server = os.environ.get("MT5_DEMO_SERVER")
+    kwargs = {"path": MT5_PATH, "portable": True, "timeout": 90000}
+    if login and password and server:
+        kwargs.update(login=int(login), password=password, server=server)
     last_err = None
-    for attempt in range(1, 7):
-        kwargs = {"path": MT5_PATH, "portable": True, "timeout": 60000}
-        if login and password and server:
-            kwargs.update(login=int(login), password=password, server=server)
+    for attempt in range(1, 11):
         if mt5.initialize(**kwargs):
             log(f"mt5.initialize OK on attempt {attempt}, terminal build={mt5.version()}")
             return
         last_err = mt5.last_error()
-        log(f"mt5.initialize attempt {attempt}/6 failed (terminal64 "
+        log(f"mt5.initialize attempt {attempt}/10 failed (terminal64 "
             f"{'alive' if terminal_alive() else 'GONE'}), last_error={last_err}")
+        journal_tail()
         mt5.shutdown()
-        time.sleep(15)
-    bail(2, f"mt5.initialize failed after 6 attempts, last_error={last_err}")
+        time.sleep(20)
+    bail(2, f"mt5.initialize failed after 10 attempts, last_error={last_err}")
 
 def ensure_algo_allowed():
     """Fresh terminals boot with algo trading OFF; orders then fail with

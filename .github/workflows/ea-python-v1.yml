@@ -34,39 +34,20 @@ jobs:
           Start-Sleep -Seconds 10
           Write-Host "terminal present: $(Test-Path 'C:\Program Files\MetaTrader 5\terminal64.exe')"
 
-      - name: Boot MT5 portable logged into demo account + one Ctrl+E for algo permission
+      - name: Clear stray terminals (module owns terminal lifecycle)
         shell: pwsh
         run: |
-          Add-Type -MemberDefinition '[DllImport("user32.dll")] public static extern void keybd_event(byte vk, byte scan, uint flags, UIntPtr extra);' -Name W1 -Namespace W
-          $mt = "C:\Program Files\MetaTrader 5"
-          $ini = "[Common]`nLogin=$env:MT5_DEMO_LOGIN`nPassword=$env:MT5_DEMO_PASSWORD`nServer=$env:MT5_DEMO_SERVER`n"
-          $iniPath = "$PWD\mt5login.ini"
-          [System.IO.File]::WriteAllText($iniPath, $ini, [System.Text.Encoding]::ASCII)
-          Start-Process -FilePath "$mt\terminal64.exe" -ArgumentList "/portable","/config:$iniPath" | Out-Null
-          Start-Sleep -Seconds 90
-          # single deterministic algo-permission toggle (fresh install always boots OFF; orders fail without it)
-          [W.W1]::keybd_event(0x11, 0, 0, [UIntPtr]::Zero)
-          Start-Sleep -Milliseconds 60
-          [W.W1]::keybd_event(0x45, 0, 0, [UIntPtr]::Zero)
-          Start-Sleep -Milliseconds 60
-          [W.W1]::keybd_event(0x45, 0, 2, [UIntPtr]::Zero)
-          [W.W1]::keybd_event(0x11, 0, 2, [UIntPtr]::Zero)
-          Start-Sleep -Seconds 5
-          Write-Host "terminal64 process: $(if (Get-Process terminal64 -ErrorAction SilentlyContinue) {'alive'} else {'GONE'})"
-          # ground-truth diagnostic: portable data folder journal = install dir\logs\YYYYMMDD.log
-          # (redact secret values before printing any journal line)
-          $jl = Get-ChildItem "$mt\logs" -Filter *.log -ErrorAction SilentlyContinue | Sort-Object LastWriteTime -Descending | Select-Object -First 1
-          if ($jl) {
-            Write-Host "journal: $($jl.Name) ($($jl.Length) bytes)"
-            Get-Content $jl.FullName -Tail 25 | ForEach-Object {
-              $red = $_ -replace $env:MT5_DEMO_LOGIN, '***' -replace $env:MT5_DEMO_PASSWORD, '***' -replace $env:MT5_DEMO_SERVER, '***'
-              Write-Host "J| $red"
-            }
-            $algoOn = Select-String -Path $jl.FullName -Pattern 'automated trading is enabled' -Quiet
-            Write-Host "journal algo-enabled line present: $algoOn"
-          } else {
-            Write-Host "journal: NO log file in $mt\logs (portable data folder missing journals?)"
-          }
+          # v1.3: NO pre-start, NO ini. Three runs proved a hand-pre-started
+          # portable terminal never opens its IPC pipe (44107726289 bare
+          # initialize, 44111389179 path+creds main-mode handshake,
+          # 44114913418 portable=True attach: 6x -10005 with terminal alive
+          # and NO portable journal in the data folder - only metaeditor.log
+          # from first-boot example compilation). The official package spawns
+          # terminal64 itself with consistent data-folder semantics.
+          taskkill /IM terminal64.exe /F 2>$null | Out-Null
+          Start-Sleep -Seconds 3
+          Write-Host "terminal64 after cleanup: $(if (Get-Process terminal64 -ErrorAction SilentlyContinue) {'STILL ALIVE'} else {'gone'})"
+          Get-ChildItem "C:\Program Files\MetaTrader 5\logs" -ErrorAction SilentlyContinue | ForEach-Object { Write-Host "pre-bot log: $($_.Name) ($($_.Length) bytes)" }
 
       - name: Run RivetSkew python bot
         shell: pwsh
