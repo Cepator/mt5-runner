@@ -1,0 +1,298 @@
+name: RivetSkew EA demo v3 (template boot)
+
+# TEMPLATE-ONLY attach route (MAIN directive 14:17, after six Navigator-family failures):
+# charts boot from seeded Charts\Default .chr files that CARRY the <expert> block
+# (structure copied verbatim from a real MT5 .chr with an attached EA, TuanBT/metatrader sample).
+# Zero Navigator / UIA tree interaction. Ctrl+E stays the only UI keypress.
+
+on:
+  workflow_dispatch: {}
+
+jobs:
+  demo:
+    runs-on: windows-latest
+    timeout-minutes: 30
+    env:
+      MT5_DEMO_LOGIN: ${{ secrets.MT5_DEMO_LOGIN }}
+      MT5_DEMO_PASSWORD: ${{ secrets.MT5_DEMO_PASSWORD }}
+      MT5_DEMO_SERVER: ${{ secrets.MT5_DEMO_SERVER }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install MT5
+        shell: pwsh
+        run: |
+          Invoke-WebRequest -Uri "https://download.mql5.com/cdn/web/metaquotes.software.corp/mt5/mt5setup.exe" -OutFile mt5setup.exe
+          Start-Process -FilePath ".\mt5setup.exe" -ArgumentList "/auto" -Wait
+          Start-Sleep -Seconds 10
+          Write-Host "terminal present: $(Test-Path 'C:\Program Files\MetaTrader 5\terminal64.exe')"
+
+      - name: Prime portable tree then compile EA
+        shell: pwsh
+        run: |
+          $mt = "C:\Program Files\MetaTrader 5"
+          Start-Process -FilePath "$mt\terminal64.exe" -ArgumentList "/portable"
+          Start-Sleep -Seconds 60
+          New-Item -ItemType Directory -Force "$mt\MQL5\Experts" | Out-Null
+          Copy-Item RivetSkewEA.mq5 "$mt\MQL5\Experts\" -Force
+          Stop-Process -Name terminal64 -Force -ErrorAction SilentlyContinue
+          Start-Sleep -Seconds 3
+          Write-Host "portable include present: $(Test-Path "$mt\MQL5\Include\Trade\Trade.mqh")"
+          if (-not (Test-Path "$mt\MQL5\Include\Trade\Trade.mqh")) {
+            $roam = Get-ChildItem "$env:APPDATA\MetaQuotes\Terminal" -Directory -ErrorAction SilentlyContinue | Where-Object { Test-Path (Join-Path $_.FullName "MQL5\Include\Trade\Trade.mqh") } | Select-Object -First 1
+            if ($roam) {
+              Copy-Item (Join-Path $roam.FullName "MQL5\Include") "$mt\MQL5\Include" -Recurse -Force
+              Write-Host "include copied from roaming data folder $($roam.Name)"
+            } else {
+              Write-Host "TRADE_MQH_NOWHERE"
+            }
+          }
+          Write-Host "include ready: $(Test-Path "$mt\MQL5\Include\Trade\Trade.mqh")"
+          $p = Start-Process -FilePath "$mt\MetaEditor64.exe" -ArgumentList "/portable","/compile:`"$mt\MQL5\Experts\RivetSkewEA.mq5`"","/log:`"$mt\MQL5\Experts\compile.log`"" -Wait -PassThru
+          Write-Host "metaeditor exit code $($p.ExitCode)"
+          if (Test-Path "$mt\MQL5\Experts\compile.log") { Get-Content "$mt\MQL5\Experts\compile.log" }
+          if (Test-Path "$mt\MQL5\Experts\RivetSkewEA.ex5") { Write-Host "EX5_OK (pre-boot Experts seeding satisfied)" } else { Write-Host "EX5_MISSING"; exit 1 }
+
+      - name: Seed Default profile .chr files WITH embedded RivetSkewEA
+        shell: pwsh
+        run: |
+          $mt = "C:\Program Files\MetaTrader 5"
+          # ex5 must exist BEFORE first boot (Navigator populates at startup; we do not use it, but chart-load EA resolution needs it)
+          Write-Host "ex5 pre-boot: $(Test-Path "$mt\MQL5\Experts\RivetSkewEA.ex5")"
+          $enc = [System.Text.Encoding]::Unicode
+          $syms = @("EURUSD","GBPUSD","USDJPY","XAUUSD")
+          $i = 1
+          foreach ($s in $syms) {
+            $id = [string](132000000000000000 + $i * 111111)
+            $L = @(
+              '<chart>',
+              "id=$id",
+              "symbol=$s",
+              'period_type=2',
+              'period_size=1',
+              'scale=4',
+              'mode=1',
+              'grid=1',
+              'scroll=1',
+              'window_type=1',
+              '',
+              '<expert>',
+              'name=RivetSkewEA',
+              'path=Experts\RivetSkewEA.ex5',
+              'flags=343',
+              'window_num=0',
+              '<inputs>',
+              'InpDonchianN=10',
+              'InpATRPeriod=14',
+              'InpStopATR=2.0',
+              'InpTrailATR=3.0',
+              'InpRiskPct=0.5',
+              'InpMaxLev=30.0',
+              'InpMaxDDPct=15.0',
+              'InpMagic=20261117',
+              '</inputs>',
+              '</expert>',
+              '',
+              '<window>',
+              'height=100',
+              '',
+              '<indicator>',
+              'name=Main',
+              'path=',
+              'apply=1',
+              'show_data=1',
+              'scale_inherit=0',
+              'scale_line=0',
+              'scale_line_percent=50',
+              'scale_line_value=0.000000',
+              'scale_fix_min=0',
+              'scale_fix_min_val=0.000000',
+              'scale_fix_max=0',
+              'scale_fix_max_val=0.000000',
+              '</indicator>',
+              '</window>',
+              '</chart>',
+              ''
+            )
+            $txt = $L -join "`r`n"
+            [System.IO.File]::WriteAllText("$env:TEMP\chart0$i.chr", $txt, $enc)
+            $i++
+          }
+          # show what the terminal will read: expert block presence check
+          $peek = Get-Content "$env:TEMP\chart01.chr"
+          Write-Host "chart01 expert block present: $(@($peek) -match '<expert>'). path line: $((@($peek) -match '^path='))"
+          $wnd = "chart01.chr`r`nchart02.chr`r`nchart03.chr`r`nchart04.chr`r`n"
+          [System.IO.File]::WriteAllText("$env:TEMP\order.wnd", $wnd, $enc)
+          $base = "$mt\MQL5\Profiles\Charts"
+          # official Files-and-Folders doc: boot profile = Charts\Default (proven loading in run 44101440680)
+          $targets = @("$base\Default")
+          $def = Get-ChildItem $base -Directory -ErrorAction SilentlyContinue | Where-Object { Test-Path (Join-Path $_.FullName "order.wnd") } | Select-Object -First 1
+          if ($def -and $def.FullName -ne "$base\Default") { $targets += $def.FullName; Write-Host "existing profile dir: $($def.FullName)" }
+          $targets += "$base\RivetSkew"
+          foreach ($t in $targets) {
+            New-Item -ItemType Directory -Force $t | Out-Null
+            Copy-Item "$env:TEMP\chart0*.chr" $t -Force
+            Copy-Item "$env:TEMP\order.wnd" $t -Force
+            Write-Host "seeded $t : $((Get-ChildItem $t | ForEach-Object Name) -join ',')"
+          }
+          New-Item -ItemType Directory -Force "$mt\Config" | Out-Null
+          $ini = "[Common]`nProfile=RivetSkew`n"
+          [System.IO.File]::WriteAllText("$mt\Config\common.ini", $ini, [System.Text.Encoding]::ASCII)
+
+      - name: Boot MT5 logged into demo account
+        shell: pwsh
+        run: |
+          Add-Type -AssemblyName System.Windows.Forms,System.Drawing
+          function Shot($name) {
+            $b = [System.Windows.Forms.SystemInformation]::VirtualScreen
+            $bmp = New-Object System.Drawing.Bitmap $b.Width, $b.Height
+            $g = [System.Drawing.Graphics]::FromImage($bmp)
+            $g.CopyFromScreen($b.Left, $b.Top, 0, 0, $bmp.Size)
+            $bmp.Save("$PWD\$name.png", [System.Drawing.Imaging.ImageFormat]::Png)
+            $g.Dispose(); $bmp.Dispose()
+          }
+          $mt = "C:\Program Files\MetaTrader 5"
+          $ini = "[Common]`nLogin=$env:MT5_DEMO_LOGIN`nPassword=$env:MT5_DEMO_PASSWORD`nServer=$env:MT5_DEMO_SERVER`nProfile=RivetSkew`n"
+          $iniPath = "$PWD\mt5login.ini"
+          [System.IO.File]::WriteAllText($iniPath, $ini, [System.Text.Encoding]::ASCII)
+          $p = Start-Process -FilePath "$mt\terminal64.exe" -ArgumentList "/portable","/config:$iniPath" -PassThru
+          Start-Sleep -Seconds 45
+          Shot "demo-v3-40s"
+          Write-Host "terminal alive: $(-not $p.HasExited)"
+          Write-Host "PID $($p.Id)"
+
+      - name: Enable algo, verify EA init from template, gate journals
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Continue'
+          Add-Type -AssemblyName System.Windows.Forms,System.Drawing
+          Add-Type -AssemblyName UIAutomationClient,UIAutomationTypes
+          Add-Type -MemberDefinition '[DllImport("user32.dll")] public static extern void keybd_event(byte vk, byte scan, uint flags, UIntPtr extra); [DllImport("user32.dll")] public static extern IntPtr GetForegroundWindow(); [DllImport("user32.dll")] public static extern bool SetForegroundWindow(IntPtr h); [DllImport("user32.dll")] public static extern bool IsWindowVisible(IntPtr h);' -Name W3 -Namespace W
+          function Shot($name) {
+            $b = [System.Windows.Forms.SystemInformation]::VirtualScreen
+            $bmp = New-Object System.Drawing.Bitmap $b.Width, $b.Height
+            $g = [System.Drawing.Graphics]::FromImage($bmp)
+            $g.CopyFromScreen($b.Left, $b.Top, 0, 0, $bmp.Size)
+            $bmp.Save("$PWD\$name.png", [System.Drawing.Imaging.ImageFormat]::Png)
+            $g.Dispose(); $bmp.Dispose()
+          }
+          function Send-Chord($vk) {
+            [W.W3]::keybd_event(0x11, 0, 0, [UIntPtr]::Zero)
+            Start-Sleep -Milliseconds 60
+            [W.W3]::keybd_event([byte]$vk, 0, 0, [UIntPtr]::Zero)
+            Start-Sleep -Milliseconds 60
+            [W.W3]::keybd_event([byte]$vk, 0, 2, [UIntPtr]::Zero)
+            [W.W3]::keybd_event(0x11, 0, 2, [UIntPtr]::Zero)
+          }
+          function Click-At($x, $y) {
+            Add-Type -MemberDefinition '[DllImport("user32.dll")] public static extern bool SetCursorPos(int x, int y); [DllImport("user32.dll")] public static extern void mouse_event(int f, int dx, int dy, int d, int i);' -Name W3M -Namespace W | Out-Null
+            [W.W3M]::SetCursorPos([int]$x, [int]$y) | Out-Null
+            Start-Sleep -Milliseconds 150
+            [W.W3M]::mouse_event(0x02, 0, 0, 0, 0); [W.W3M]::mouse_event(0x04, 0, 0, 0, 0)
+          }
+          $mt = "C:\Program Files\MetaTrader 5"
+          $tp = Get-Process terminal64 -ErrorAction Stop | Select-Object -First 1
+          $mainH = $tp.MainWindowHandle
+          if ($mainH -eq [IntPtr]::Zero) { Write-Host "MAIN_WINDOW_GONE"; exit 1 }
+          [W.W3]::SetForegroundWindow($mainH) | Out-Null
+          Start-Sleep -Milliseconds 400
+          $rootEl = [System.Windows.Automation.AutomationElement]::RootElement
+          $procCond = New-Object System.Windows.Automation.PropertyCondition([System.Windows.Automation.AutomationElement]::ProcessIdProperty, $tp.Id)
+
+          # LiveUpdate guard (proven: pops 2-4 min post-boot, hijacks input)
+          function Dismiss-LiveUpdate($maxS) {
+            $deadline = (Get-Date).AddSeconds($maxS)
+            while ((Get-Date) -lt $deadline) {
+              $lu = $null
+              foreach ($el in $rootEl.FindAll([System.Windows.Automation.TreeScope]::Descendants, $procCond)) {
+                try { if ($el.Current.Name -match 'LiveUpdate') { $lu = $el; break } } catch {}
+              }
+              if (-not $lu) { return $true }
+              Write-Host "LIVEUPDATE Detected, clicking Later"
+              $later = $null
+              foreach ($el in $lu.FindAll([System.Windows.Automation.TreeScope]::Descendants, [System.Windows.Automation.Condition]::TrueCondition)) {
+                try { if ($el.Current.Name -match 'Later') { $later = $el; break } } catch {}
+              }
+              if ($later) {
+                $done = $false
+                try { ($later.GetCurrentPattern([System.Windows.Automation.InvokePattern]::Pattern)).Invoke(); $done = $true } catch {}
+                if (-not $done) {
+                  $r = $later.Current.BoundingRectangle
+                  Click-At ($r.X + $r.Width / 2) ($r.Y + $r.Height / 2)
+                }
+              } else {
+                try { $lu.SetFocus() } catch {}
+                [W.W3]::keybd_event(0x1B, 0, 0, [UIntPtr]::Zero); [W.W3]::keybd_event(0x1B, 0, 2, [UIntPtr]::Zero)
+              }
+              Start-Sleep -Seconds 3
+            }
+            return $false
+          }
+          $luGone = Dismiss-LiveUpdate 90
+          Write-Host "LIVEUPDATE_CLEARED $luGone"
+
+          # Algo Trading ON (fresh runner always boots OFF; EA may have already inited with a warn, which this route tolerates)
+          Send-Chord 0x45
+          Start-Sleep -Seconds 3
+          Write-Host "ALGO Ctrl+E sent"
+
+          # give chart-load EAs time to init + journals to flush
+          Start-Sleep -Seconds 40
+          Shot "demo-v3-attached"
+          Write-Host "terminal still alive: $(-not (Get-Process terminal64 -ErrorAction SilentlyContinue).HasExited)"
+
+          # Evidence: date-named journals only (metaeditor.log poisoned v1)
+          $log = Get-ChildItem "$mt\logs" -Filter *.log -ErrorAction SilentlyContinue | Where-Object { $_.Name -match '^\d{8}\.log$' } | Sort-Object LastWriteTime -Descending | Select-Object -First 1
+          if ($log) { Copy-Item $log.FullName "$PWD\terminal-journal.log" -Force; Write-Host "journal: $($log.FullName)" } else { Write-Host "NO_TERMINAL_JOURNAL" }
+          $elog = Get-ChildItem "$mt\MQL5\Logs" -Filter *.log -ErrorAction SilentlyContinue | Where-Object { $_.Name -match '^\d{8}\.log$' } | Sort-Object LastWriteTime -Descending | Select-Object -First 1
+          if ($elog) { Copy-Item $elog.FullName "$PWD\experts-journal.log" -Force; Write-Host "experts log: $($elog.FullName)" } else { Write-Host "NO_EXPERTS_JOURNAL" }
+          Copy-Item "$mt\MQL5\Experts\compile.log" "$PWD\compile.log" -Force -ErrorAction SilentlyContinue
+          Shot "demo-v3-final"
+
+          $g = @{ init = @(); warn = 99; live = 99; atr = 99; authfail = 99; algoon = 0 }
+          if ($elog) {
+            $all = Get-Content $elog.FullName
+            $g.init = @($all | Select-String 'RivetSkew init (\S+)' | ForEach-Object { $_.Matches[0].Groups[1].Value })
+            $g.warn = @($all | Select-String 'algo trading not enabled').Count
+            $g.live = @($all | Select-String 'LIVE account refused').Count
+            $g.atr  = @($all | Select-String 'ATR handle failed').Count
+          }
+          if ($log) {
+            $tall = Get-Content $log.FullName
+            $g.authfail = @($tall | Select-String 'authorization failed|invalid account|bad login').Count
+            $g.algoon = @($tall | Select-String 'automated trading is enabled').Count
+          }
+          $distinct = @($g.init | Sort-Object -Unique).Count
+          Write-Host "RIVETSKEW_INIT: $($g.init.Count) lines syms=[$($g.init -join ',')] distinct=$distinct"
+          Write-Host "ALGO_WARN: $($g.warn) (expected >0 on template route when Ctrl+E lands after chart load)"
+          Write-Host "ALGO_ENABLED_LINES: $($g.algoon)"
+          Write-Host "LIVE_REFUSED: $($g.live)"
+          Write-Host "ATR_FAIL: $($g.atr)"
+          Write-Host "AUTH_FAIL: $($g.authfail)"
+
+          if ($distinct -ge 4 -and $g.algoon -ge 1 -and $g.live -eq 0 -and $g.atr -eq 0 -and $g.authfail -eq 0) {
+            Write-Host "ATTACH_V3_OK"
+          } else {
+            Write-Host "ATTACH_V3_FAIL distinct=$distinct algoon=$($g.algoon) warn=$($g.warn) live=$($g.live) atr=$($g.atr) authfail=$($g.authfail)"
+            Shot "demo-v3-fail-gates"
+            Stop-Process -Name terminal64 -Force -ErrorAction SilentlyContinue
+            Remove-Item "$PWD\mt5login.ini" -Force -ErrorAction SilentlyContinue
+            exit 1
+          }
+
+          # graceful close so the terminal re-saves the profile WITH the EA attached (persistence proof)
+          $tp.CloseMainWindow() | Out-Null
+          Start-Sleep -Seconds 20
+          Stop-Process -Name terminal64 -Force -ErrorAction SilentlyContinue
+          Remove-Item "$PWD\mt5login.ini" -Force -ErrorAction SilentlyContinue
+
+      - name: Upload demo evidence v3
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: rivetskew-demo-v3
+          path: |
+            demo-v3-*.png
+            terminal-journal.log
+            experts-journal.log
+            compile.log
