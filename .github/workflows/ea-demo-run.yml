@@ -1,0 +1,146 @@
+name: RivetSkew EA demo run
+
+on:
+  workflow_dispatch: {}
+
+jobs:
+  demo:
+    runs-on: windows-latest
+    timeout-minutes: 25
+    env:
+      MT5_DEMO_LOGIN: ${{ secrets.MT5_DEMO_LOGIN }}
+      MT5_DEMO_PASSWORD: ${{ secrets.MT5_DEMO_PASSWORD }}
+      MT5_DEMO_SERVER: ${{ secrets.MT5_DEMO_SERVER }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install MT5
+        shell: pwsh
+        run: |
+          Invoke-WebRequest -Uri "https://download.mql5.com/cdn/web/metaquotes.software.corp/mt5/mt5setup.exe" -OutFile mt5setup.exe
+          Start-Process -FilePath ".\mt5setup.exe" -ArgumentList "/auto" -Wait
+          Start-Sleep -Seconds 10
+          Write-Host "terminal present: $(Test-Path 'C:\Program Files\MetaTrader 5\terminal64.exe')"
+
+      - name: Prime portable tree then compile EA
+        shell: pwsh
+        run: |
+          $mt = "C:\Program Files\MetaTrader 5"
+          Start-Process -FilePath "$mt\terminal64.exe" -ArgumentList "/portable"
+          Start-Sleep -Seconds 60
+          New-Item -ItemType Directory -Force "$mt\MQL5\Experts" | Out-Null
+          Copy-Item RivetSkewEA.mq5 "$mt\MQL5\Experts\" -Force
+          Stop-Process -Name terminal64 -Force -ErrorAction SilentlyContinue
+          Start-Sleep -Seconds 3
+          Write-Host "portable include present: $(Test-Path "$mt\MQL5\Include\Trade\Trade.mqh")"
+          if (-not (Test-Path "$mt\MQL5\Include\Trade\Trade.mqh")) {
+            $roam = Get-ChildItem "$env:APPDATA\MetaQuotes\Terminal" -Directory -ErrorAction SilentlyContinue | Where-Object { Test-Path (Join-Path $_.FullName "MQL5\Include\Trade\Trade.mqh") } | Select-Object -First 1
+            if ($roam) {
+              Copy-Item (Join-Path $roam.FullName "MQL5\Include") "$mt\MQL5\Include" -Recurse -Force
+              Write-Host "include copied from roaming data folder $($roam.Name)"
+            } else {
+              Write-Host "TRADE_MQH_NOWHERE"
+            }
+          }
+          Write-Host "include ready: $(Test-Path "$mt\MQL5\Include\Trade\Trade.mqh")"
+          $p = Start-Process -FilePath "$mt\MetaEditor64.exe" -ArgumentList "/portable","/compile:`"$mt\MQL5\Experts\RivetSkewEA.mq5`"","/log:`"$mt\MQL5\Experts\compile.log`"" -Wait -PassThru
+          Write-Host "metaeditor exit code $($p.ExitCode)"
+          if (Test-Path "$mt\MQL5\Experts\compile.log") { Get-Content "$mt\MQL5\Experts\compile.log" }
+          if (Test-Path "$mt\MQL5\Experts\RivetSkewEA.ex5") { Write-Host "EX5_OK" } else { Write-Host "EX5_MISSING"; exit 1 }
+
+      - name: Seed RivetSkew profile with four W1 charts
+        shell: pwsh
+        run: |
+          $mt = "C:\Program Files\MetaTrader 5"
+          $prof = "$mt\MQL5\Profiles\Charts\RivetSkew"
+          New-Item -ItemType Directory -Force $prof | Out-Null
+          $enc = [System.Text.Encoding]::Unicode
+          $syms = @("EURUSD","GBPUSD","USDJPY","XAUUSD")
+          $i = 1
+          foreach ($s in $syms) {
+            $id = [string](132000000000000000 + $i * 111111)
+            $txt = @"
+<chart>
+id=$id
+symbol=$s
+period_type=2
+period_size=1
+scale=4
+mode=1
+grid=1
+scroll=1
+window_type=1
+
+<window>
+height=100
+
+<indicator>
+name=Main
+path=
+apply=1
+show_data=1
+scale_inherit=0
+scale_line=0
+scale_line_percent=50
+scale_line_value=0.000000
+scale_fix_min=0
+scale_fix_min_val=0.000000
+scale_fix_max=0
+scale_fix_max_val=0.000000
+</indicator>
+</window>
+</chart>
+"@
+            [System.IO.File]::WriteAllText("$prof\chart0$i.chr", $txt, $enc)
+            $i++
+          }
+          $wnd = "chart01.chr`nchart02.chr`nchart03.chr`nchart04.chr`n"
+          [System.IO.File]::WriteAllText("$prof\order.wnd", $wnd, $enc)
+          $cfg = "$mt\Config"
+          New-Item -ItemType Directory -Force $cfg | Out-Null
+          $ini = "[Common]`nProfile=RivetSkew`n"
+          [System.IO.File]::WriteAllText("$cfg\common.ini", $ini, [System.Text.Encoding]::ASCII)
+          Write-Host "profile seeded: $(Get-ChildItem $prof | ForEach-Object Name)"
+
+      - name: Boot MT5 logged into demo account
+        shell: pwsh
+        run: |
+          Add-Type -AssemblyName System.Windows.Forms,System.Drawing
+          function Shot($name) {
+            $b = [System.Windows.Forms.SystemInformation]::VirtualScreen
+            $bmp = New-Object System.Drawing.Bitmap $b.Width, $b.Height
+            $g = [System.Drawing.Graphics]::FromImage($bmp)
+            $g.CopyFromScreen($b.Left, $b.Top, 0, 0, $bmp.Size)
+            $bmp.Save("$PWD\$name.png", [System.Drawing.Imaging.ImageFormat]::Png)
+            $g.Dispose(); $bmp.Dispose()
+          }
+          $mt = "C:\Program Files\MetaTrader 5"
+          $ini = "[Common]`nLogin=$env:MT5_DEMO_LOGIN`nPassword=$env:MT5_DEMO_PASSWORD`nServer=$env:MT5_DEMO_SERVER`n"
+          $iniPath = "$PWD\mt5login.ini"
+          [System.IO.File]::WriteAllText($iniPath, $ini, [System.Text.Encoding]::ASCII)
+          $p = Start-Process -FilePath "$mt\terminal64.exe" -ArgumentList "/portable","/config:$iniPath" -PassThru
+          Start-Sleep -Seconds 40
+          Shot "demo-v1-40s"
+          Start-Sleep -Seconds 60
+          Shot "demo-v1-100s"
+          Write-Host "terminal alive: $(-not $p.HasExited)"
+          $log = Get-ChildItem "$mt\logs" -Filter *.log | Sort-Object LastWriteTime -Descending | Select-Object -First 1
+          if ($log) {
+            Write-Host "journal: $($log.FullName)"
+            $lines = Get-Content $log.FullName -Tail 60
+            $lines | ForEach-Object { Write-Host "J| $_" }
+            Write-Host "RIVETSKEW_INIT: $((($lines | Select-String 'RivetSkew init') | Measure-Object).Count) lines"
+            Write-Host "ALGO_WARN: $((($lines | Select-String 'algo trading not enabled') | Measure-Object).Count) lines"
+            Write-Host "AUTH_FAIL: $((($lines | Select-String 'authorization failed|invalid account|bad login') | Measure-Object).Count) lines"
+          } else { Write-Host "NO_JOURNAL" }
+          Stop-Process -Name terminal64 -Force -ErrorAction SilentlyContinue
+          Remove-Item $iniPath -Force -ErrorAction SilentlyContinue
+
+      - name: Upload demo evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: rivetskew-demo-v1
+          path: |
+            demo-v1-*.png
+            C:\Program Files\MetaTrader 5\MQL5\Experts\compile.log
