@@ -235,39 +235,38 @@ jobs:
           Write-Host "NAV_FOUND $($nav -ne $null)"
           Start-Sleep -Seconds 2
 
-          # 3. Expand Expert Advisors node (UIA ladder first, then measured pixel fallback: node at 66,362, row height 18-19)
-          $exp = Find-In-Scopes '^Expert Advisors'
-          if ($exp) {
-            $pt = Center-Of $exp
-            DblClick-At $pt.X $pt.Y
-            Start-Sleep -Seconds 2
-            Write-Host "EXPERTS_NODE dblclicked UIA at $($pt.X),$($pt.Y)"
-          } else {
-            Write-Host "EXPERTS_NODE_UIA_MISS pixel fallback"
-            DblClick-At 66 362
-            Start-Sleep -Seconds 2
-          }
+          # 3. Locate RivetSkewEA via keyboard tree navigation (measured geometry: Expert Advisors row 75,346; strip at y 383; child rows push below so the tree must auto-scroll via selection)
+          # single click selects the row (survey: MetaTrader 5 y281, Accounts 306, Indicators 327, Expert Advisors 346, Scripts 365)
+          Click-At 75 346
+          Start-Sleep -Milliseconds 800
+          $selOk = $false
+          try { $feS = [System.Windows.Automation.AutomationElement]::FocusedElement; if ($feS -and $feS.Current.Name -match 'Expert Advisors') { $selOk = $true; Write-Host "SELECTION_VERIFIED $($feS.Current.Name)" } } catch {}
+          if (-not $selOk) { Write-Host "SELECTION_UNVERIFIED proceeding" }
+          # RIGHT expands collapsed node (no-op toggle risk: never dblclick the node)
+          [W.W4]::keybd_event(0x27, 0, 0, [UIntPtr]::Zero); [W.W4]::keybd_event(0x27, 0, 2, [UIntPtr]::Zero)
+          Start-Sleep -Seconds 2
+          # DOWN into children: Examples then RivetSkewEA; tree scrolls selection into view
+          [W.W4]::keybd_event(0x28, 0, 0, [UIntPtr]::Zero); [W.W4]::keybd_event(0x28, 0, 2, [UIntPtr]::Zero)
+          Start-Sleep -Milliseconds 700
+          [W.W4]::keybd_event(0x28, 0, 0, [UIntPtr]::Zero); [W.W4]::keybd_event(0x28, 0, 2, [UIntPtr]::Zero)
+          Start-Sleep -Milliseconds 800
           Shot "demo-v2-tree"
+          $eaPt = $null
           $ea = Find-In-Scopes 'RivetSkewEA'
-          if (-not $ea) {
-            DblClick-At 66 362
-            Start-Sleep -Seconds 2
-            $ea = Find-In-Scopes 'RivetSkewEA'
+          if ($ea) { $eaPt = Center-Of $ea }
+          if (-not $eaPt) {
+            try {
+              $feF = [System.Windows.Automation.AutomationElement]::FocusedElement
+              if ($feF -and $feF.Current.Name -match 'RivetSkewEA') { $eaPt = Center-Of $feF; Write-Host "EA via focused element" }
+            } catch {}
           }
-          if (-not $ea) {
-            # blind pixel row: Expert Advisors 362 -> Examples 380 -> RivetSkewEA 398; dialog title gate prevents wrong attach
-            Write-Host "EA_PIXEL_FALLBACK dblclick at 80,398"
-            DblClick-At 80 398
-            Start-Sleep -Seconds 3
-            $fh0 = [W.W4]::GetForegroundWindow()
-            if ($fh0 -ne [IntPtr]::Zero -and $fh0 -ne $mainH -and [W.W4]::IsWindowVisible($fh0)) {
-              try {
-                $fe0 = [System.Windows.Automation.AutomationElement]::FromHandle($fh0)
-                if ($fe0.Current.ProcessId -eq $tp.Id -and $fe0.Current.Name -match 'RivetSkewEA') { Write-Host "EA_PIXEL_DIALOG_OK" } else { Write-Host "EA_PIXEL_DIALOG_REJECT $($fe0.Current.Name)"; [W.W4]::keybd_event(0x1B, 0, 0, [UIntPtr]::Zero); [W.W4]::keybd_event(0x1B, 0, 2, [UIntPtr]::Zero) }
-              } catch {}
-            }
+          if (-not $eaPt) {
+            # blind last resort: selected row sits near panel bottom above strip; dialog title gate prevents wrong attach
+            Write-Host "EA_BLIND_ROW 85,367"
+            $eaPt = New-Object System.Windows.Point 85, 367
           }
-          if (-not $ea) {
+          Write-Host "EA_ROW_AT $($eaPt.X),$($eaPt.Y)"
+          if (-not ($ea -or $eaPt)) {
             Write-Host "EA_ITEM_MISSING"
             Shot "demo-v2-fail-notree"
             $log2 = Get-ChildItem "$mt\logs" -Filter *.log -ErrorAction SilentlyContinue | Where-Object { $_.Name -match '^\d{8}\.log$' } | Sort-Object LastWriteTime -Descending | Select-Object -First 1
@@ -279,7 +278,7 @@ jobs:
             Remove-Item "$PWD\mt5login.ini" -Force -ErrorAction SilentlyContinue
             exit 1
           }
-          Write-Host "EA_ITEM $($ea.Current.Name)"
+          Write-Host "EA_READY pt=$($eaPt.X),$($eaPt.Y) uia=$($ea -ne $null)"
 
           # 4. Attach on each chart tab (attach, Ctrl+Tab) x4, re-find element each loop (stale guard)
           $attached = 0
@@ -287,9 +286,8 @@ jobs:
             Focus-Terminal $mainH | Out-Null
             Start-Sleep -Milliseconds 500
             $ea = Find-In-Scopes 'RivetSkewEA'
-            if (-not $ea) { Write-Host "EA_STALE_GONE attach $i"; Shot "demo-v2-fail-notree$i"; break }
-            $pt = Center-Of $ea
-            DblClick-At $pt.X $pt.Y
+            if ($ea) { $eaPt = Center-Of $ea; Write-Host "EA_REFOUND $($eaPt.X),$($eaPt.Y)" }
+            DblClick-At $eaPt.X $eaPt.Y
             $dlg = $null
             for ($w = 0; $w -lt 12; $w++) {
               Start-Sleep -Seconds 1
@@ -374,6 +372,7 @@ jobs:
             Send-Chord 0x45
             Start-Sleep -Seconds 3
             $ea = Find-In-Scopes 'RivetSkewEA'
+            if ($ea) { $eaPt = Center-Of $ea }
             if ($ea) {
               $pt = Center-Of $ea
               DblClick-At $pt.X $pt.Y
