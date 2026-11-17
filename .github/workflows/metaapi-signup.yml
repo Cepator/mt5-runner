@@ -26,6 +26,22 @@ jobs:
         run: |
           python signup_flow.py
 
+      - name: Live verify token
+        shell: pwsh
+        run: |
+          $tok = (Get-Content meta_token.txt -Raw).Trim()
+          Write-Host "token length $($tok.Length)"
+          try {
+            $r = Invoke-WebRequest -Uri "https://mt-provisioning-api-v1.agiliumtrade.agiliumtrade.ai/users/current/accounts" -Headers @{ "auth-token" = $tok } -UseBasicParsing -TimeoutSec 30
+            Write-Host ("VERIFY_HTTP " + [int]$r.StatusCode)
+            if ([int]$r.StatusCode -ne 200) { exit 1 }
+          } catch {
+            $code = 0
+            try { $code = [int]$_.Exception.Response.StatusCode } catch {}
+            Write-Host ("VERIFY_HTTP " + $code)
+            exit 1
+          }
+
       - name: Upload evidence
         if: always()
         uses: actions/upload-artifact@v4
