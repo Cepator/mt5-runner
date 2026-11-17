@@ -62,86 +62,99 @@ def wait_mail(subject_pat, tries=16, delay=15):
 
 from playwright.sync_api import sync_playwright
 
-# ---------- turnstile v3 ----------
+# ---------- recaptcha v4 ----------
+# v3 autopsy (run 44158570533): the gate on sign-in/sign-up is a Google reCAPTCHA v2
+# checkbox (iframe recaptcha/api2/anchor 256x60, textarea g-recaptcha-response in main
+# doc). v3 searched only for Cloudflare Turnstile DOM, found none, submitted and the
+# form silently blocked. Vision on the artifacts misread the widget as Turnstile.
 
-def turnstile_resolved(pg):
-    """Hidden response input on the main doc carries the solution token."""
-    try:
-        return pg.evaluate(
-            "() => { const i = document.querySelector('input[name=\"cf-turnstile-response\"]');"
-            " return !!(i && i.value && i.value.length > 10); }")
-    except Exception:
-        return False
+ANCHOR_FRAME = 'iframe[src*="recaptcha/api2/anchor"], iframe[title*="reCAPTCHA" i]'
+CHALLENGE_FRAME = 'iframe[src*="recaptcha/api2/bframe"], iframe[title*="recaptcha challenge" i]'
 
-def turnstile_widget_present(pg):
-    try:
-        return pg.evaluate(
-            "() => !!(document.querySelector('.cf-turnstile') ||"
-            " document.querySelector('iframe[src*=\"challenges.cloudflare.com\"]'))")
-    except Exception:
-        return False
-
-def poke_frames(pg):
-    """Try clicking the checkbox inside each cloudflare challenge frame."""
-    clicked = False
+def recaptcha_present(pg):
     try:
         for fr in pg.frames:
-            if "challenges.cloudflare.com" in (fr.url or ""):
-                for sel in ("input[type=checkbox]", ".ctp-checkbox-label", "label", "body"):
-                    try:
-                        fr.locator(sel).first.click(timeout=2500)
-                        clicked = True
-                        break
-                    except Exception:
-                        continue
+            if "recaptcha" in (fr.url or ""):
+                return True
     except Exception:
         pass
-    return clicked
-
-def poke_coordinates(pg):
-    """Click where the widget checkbox sits by page coordinates (crosses iframes)."""
     try:
-        box = pg.evaluate(
-            "() => { const w = document.querySelector('.cf-turnstile');"
-            " const f = document.querySelector('iframe[src*=\"challenges.cloudflare.com\"]');"
-            " const el = w || f; if (!el) return null;"
-            " const r = el.getBoundingClientRect();"
-            " return {x: r.x, y: r.y, w: r.width, h: r.height}; }")
-        if box and box.get("w", 0) > 5:
-            x = box["x"] + min(30, box["w"] / 2)
-            y = box["y"] + box["h"] / 2
-            pg.mouse.click(x, y)
-            return True
+        return pg.evaluate(
+            "() => !!(document.querySelector('textarea[name=\"g-recaptcha-response\"]')"
+            " || document.querySelector('iframe[src*=\"recaptcha\"]'))")
+    except Exception:
+        return False
+
+def recaptcha_solved(pg):
+    try:
+        return pg.evaluate(
+            "() => { const els = document.querySelectorAll("
+            "'textarea[name=\"g-recaptcha-response\"], input[name=\"g-recaptcha-response\"],"
+            " #g-recaptcha-response');"
+            " for (const e of els) { if (e.value && e.value.length > 10) return true; }"
+            " return false; }")
+    except Exception:
+        return False
+
+def recaptcha_challenge_shown(pg):
+    try:
+        return pg.evaluate(
+            "(sel) => { const f = document.querySelector(sel); if (!f) return false;"
+            " const r = f.getBoundingClientRect(); return r.width > 50 && r.height > 50; }",
+            CHALLENGE_FRAME)
+    except Exception:
+        return False
+
+def recaptcha_click(pg):
+    # A: click the checkbox inside the anchor iframe
+    try:
+        floc = pg.frame_locator(ANCHOR_FRAME)
+        floc.locator("#recaptcha-anchor, .recaptcha-checkbox-border").first.click(timeout=4000)
+        return True
+    except Exception:
+        pass
+    # B: coordinate click at the checkbox position of the anchor iframe
+    try:
+        for el in pg.query_selector_all("iframe"):
+            src = el.get_attribute("src") or ""
+            if "recaptcha/api2/anchor" in src:
+                bb = el.bounding_box()
+                if bb and bb["width"] > 10:
+                    x = bb["x"] + min(28, bb["width"] / 2)
+                    y = bb["y"] + bb["height"] / 2
+                    pg.mouse.move(x, y, steps=10)
+                    pg.wait_for_timeout(400)
+                    pg.mouse.move(x + 2, y - 1, steps=3)
+                    pg.mouse.click(x, y)
+                    return True
     except Exception:
         pass
     return False
 
-def turnstile_wait(pg, timeout_s=180, tag=""):
-    """Wait for resolution; re-poke (frame click + coordinate click) every 12s."""
+def recaptcha_wait(pg, timeout_s, tag, click_box=True):
     deadline = time.time() + timeout_s
     last_poke = 0.0
     pokes = 0
-    saw_widget = False
+    announced = False
+    challenge = False
     while time.time() < deadline:
-        if turnstile_resolved(pg):
-            log("turnstile resolved " + tag + " pokes=" + str(pokes))
-            return True
-        if not saw_widget and turnstile_widget_present(pg):
-            saw_widget = True
-            log("turnstile widget visible " + tag)
-        if time.time() - last_poke >= 12:
+        if recaptcha_solved(pg):
+            log("recaptcha solved " + tag + " pokes=" + str(pokes) + " challenge=" + str(challenge))
+            return "solved"
+        if not announced and recaptcha_present(pg):
+            announced = True
+            log("recaptcha widget present " + tag)
+        if not challenge and recaptcha_challenge_shown(pg):
+            challenge = True
+            log("recaptcha IMAGE CHALLENGE shown " + tag + " (unsolvable, waiting)")
+        if click_box and not challenge and time.time() - last_poke >= 12:
             last_poke = time.time()
             pokes += 1
-            a = poke_frames(pg)
-            b = poke_coordinates(pg)
-            log("poke " + str(pokes) + " " + tag + " frame=" + str(a) + " coord=" + str(b))
+            c = recaptcha_click(pg)
+            log("rpoke " + str(pokes) + " " + tag + " click=" + str(c))
         pg.wait_for_timeout(2000)
-    if not saw_widget:
-        # no gate rendered at all: treat as pass-through, submit will tell us
-        log("turnstile never appeared " + tag + " - assuming no gate")
-        return True
-    log("turnstile UNRESOLVED " + tag + " after " + str(timeout_s) + "s pokes=" + str(pokes))
-    return False
+    log("recaptcha UNRESOLVED " + tag + " after " + str(timeout_s) + "s pokes=" + str(pokes) + " challenge=" + str(challenge))
+    return "timeout"
 
 def visible_text(pg):
     try:
@@ -150,10 +163,12 @@ def visible_text(pg):
         return ""
 
 with sync_playwright() as p:
-    # headed on the runner desktop: Cloudflare Turnstile stalls headless
+    # headed on the runner desktop: recaptcha risk analysis stalls headless
     b = p.chromium.launch(channel="msedge", headless=False,
-                          args=["--disable-blink-features=AutomationControlled"])
-    ctx = b.new_context(permissions=["clipboard-read", "clipboard-write"])
+                          args=["--disable-blink-features=AutomationControlled",
+                                "--window-size=1280,900"])
+    ctx = b.new_context(permissions=["clipboard-read", "clipboard-write"],
+                        viewport={"width": 1280, "height": 900})
     pg = ctx.new_page()
 
     def fill(lbl, sel, val):
@@ -180,10 +195,40 @@ with sync_playwright() as p:
 
     def settle():
         try:
-            pg.wait_for_load_state("networkidle", timeout=60000)
+            pg.wait_for_load_state("networkidle", timeout=45000)
         except Exception:
             pass
         pg.wait_for_timeout(3000)
+
+    def page_advanced(kind):
+        u = pg.url.lower()
+        if kind == "signin":
+            return not re.search(r"sign-in|signin", u)
+        return (not re.search(r"sign-up|signup", u)) or ("dashboard" in u)
+
+    def gate_then_submit(tag, kind, gate_timeout_s=120):
+        # short pre-wait: widget may auto-pass (managed) or take one click
+        pre = recaptcha_wait(pg, 20, tag + "-pre", click_box=True)
+        if pre != "solved":
+            log(tag + " pre-submit gate state " + pre)
+        submit_current(tag + "-submit")
+        settle()
+        log(tag + " post-submit url " + pg.url)
+        pg.screenshot(path="shot-" + tag + "-after-submit.png")
+        if page_advanced(kind):
+            return True
+        # form blocked by the gate: solve loop, then resubmit
+        state = recaptcha_wait(pg, gate_timeout_s, tag + "-gate", click_box=True)
+        if state == "solved":
+            pg.wait_for_timeout(4000)
+            if not page_advanced(kind):
+                submit_current(tag + "-retry")
+                settle()
+                log(tag + " post-retry url " + pg.url)
+                pg.screenshot(path="shot-" + tag + "-after-retry.png")
+            return page_advanced(kind)
+        pg.screenshot(path="shot-" + tag + "-gate-stuck.png")
+        return False
 
     def attempt_signin(tag):
         log(tag + " signin goto")
@@ -192,14 +237,7 @@ with sync_playwright() as p:
         ok_e = fill("Email", "input[type=email]", EMAIL)
         ok_p = fill("Password", "input[type=password]", PASSWORD)
         log(tag + " signin fills " + str([ok_e, ok_p]))
-        if not turnstile_wait(pg, 180, tag + "-signin"):
-            pg.screenshot(path="shot-" + tag + "-turnstile-stuck.png")
-            return False
-        submit_current(tag + "-signin")
-        settle()
-        log(tag + " signin post url " + pg.url)
-        pg.screenshot(path="shot-" + tag + "-signin.png")
-        return not re.search(r"sign-in|signin", pg.url, re.I)
+        return gate_then_submit(tag, "signin")
 
     def attempt_signup(tag):
         log(tag + " signup goto")
@@ -214,19 +252,19 @@ with sync_playwright() as p:
         except Exception:
             try: pg.locator("input[type=checkbox]").first.check()
             except Exception as e: log(tag + " terms check fallback failed " + str(e)[:60])
-        if not turnstile_wait(pg, 180, tag + "-signup"):
-            pg.screenshot(path="shot-" + tag + "-turnstile-stuck.png")
-            return False
-        submit_current(tag + "-signup")
-        settle()
-        log(tag + " post-submit url " + pg.url)
-        pg.screenshot(path="shot-" + tag + "-after-submit.png")
-        body_marker = visible_text(pg)
-        log(tag + " page text: " + body_marker[:200])
-        if re.search(r"already (exists|registered|an account)", body_marker, re.I):
+        body_before = visible_text(pg)
+        if re.search(r"already (exists|registered|an account)", body_before, re.I):
+            log(tag + " account already exists (prefill) -> signin")
+            return attempt_signin(tag + "-x")
+        ok = gate_then_submit(tag, "signup")
+        if ok:
+            return True
+        body_after = visible_text(pg)
+        log(tag + " page text: " + body_after[:200])
+        if re.search(r"already (exists|registered|an account)", body_after, re.I):
             log(tag + " account already exists -> signin")
             return attempt_signin(tag + "-x")
-        return not re.search(r"sign-up", pg.url, re.I) or "dashboard" in pg.url.lower()
+        return False
 
     # retry ladder: signin (account exists), signup fallback, signin retry
     logged = attempt_signin("p1")
