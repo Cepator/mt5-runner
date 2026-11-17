@@ -236,23 +236,44 @@ jobs:
           Start-Sleep -Seconds 3
           Write-Host "ALGO Ctrl+E sent"
 
-          # give chart-load EAs time to init + journals to flush
-          Start-Sleep -Seconds 40
-          Shot "demo-v3-attached"
-          Write-Host "terminal still alive: $(-not (Get-Process terminal64 -ErrorAction SilentlyContinue).HasExited)"
+          function Copy-Journals {
+            $l = Get-ChildItem "$mt\logs" -Filter *.log -ErrorAction SilentlyContinue | Where-Object { $_.Name -match '^\d{8}\.log$' } | Sort-Object LastWriteTime -Descending | Select-Object -First 1
+            if ($l) { Copy-Item $l.FullName "$PWD\terminal-journal.log" -Force; $script:logPath = $l.FullName }
+            $el = Get-ChildItem "$mt\MQL5\Logs" -Filter *.log -ErrorAction SilentlyContinue | Where-Object { $_.Name -match '^\d{8}\.log$' } | Sort-Object LastWriteTime -Descending | Select-Object -First 1
+            if ($el) { Copy-Item $el.FullName "$PWD\experts-journal.log" -Force; $script:elogPath = $el.FullName }
+          }
+          function Read-Distinct-Inits {
+            if (-not (Test-Path "$PWD\experts-journal.log")) { return 0 }
+            $raw = Get-Content "$PWD\experts-journal.log" -ErrorAction SilentlyContinue
+            return @(($raw | Select-String 'RivetSkew init (\S+)' | ForEach-Object { $_.Matches[0].Groups[1].Value }) | Sort-Object -Unique).Count
+          }
 
-          # Evidence: date-named journals only (metaeditor.log poisoned v1)
-          $log = Get-ChildItem "$mt\logs" -Filter *.log -ErrorAction SilentlyContinue | Where-Object { $_.Name -match '^\d{8}\.log$' } | Sort-Object LastWriteTime -Descending | Select-Object -First 1
-          if ($log) { Copy-Item $log.FullName "$PWD\terminal-journal.log" -Force; Write-Host "journal: $($log.FullName)" } else { Write-Host "NO_TERMINAL_JOURNAL" }
-          $elog = Get-ChildItem "$mt\MQL5\Logs" -Filter *.log -ErrorAction SilentlyContinue | Where-Object { $_.Name -match '^\d{8}\.log$' } | Sort-Object LastWriteTime -Descending | Select-Object -First 1
-          if ($elog) { Copy-Item $elog.FullName "$PWD\experts-journal.log" -Force; Write-Host "experts log: $($elog.FullName)" } else { Write-Host "NO_EXPERTS_JOURNAL" }
+          # Poll for gate pass: template-boot EA inits only AFTER the trade server connects,
+          # which can land 2-4 min post-boot (run 44105459198: still pending at the old fixed 95s grab).
+          $pollDeadline = (Get-Date).AddSeconds(240)
+          $distinct = 0
+          while ((Get-Date) -lt $pollDeadline) {
+            Copy-Journals
+            $distinct = Read-Distinct-Inits
+            Write-Host "POLL $(Get-Date -Format HH:mm:ss) distinct_inits=$distinct"
+            if ($distinct -ge 4) { break }
+            Start-Sleep -Seconds 10
+          }
+          Write-Host "terminal still alive: $(-not (Get-Process terminal64 -ErrorAction SilentlyContinue).HasExited)"
+          Start-Sleep -Seconds 10
+          Copy-Journals
+          $log = $script:logPath
+          $elog = $script:elogPath
+          if ($log) { Write-Host "journal: $log" } else { Write-Host "NO_TERMINAL_JOURNAL" }
+          if ($elog) { Write-Host "experts log: $elog" } else { Write-Host "NO_EXPERTS_JOURNAL" }
           Copy-Item "$mt\MQL5\Experts\compile.log" "$PWD\compile.log" -Force -ErrorAction SilentlyContinue
-          Shot "demo-v3-final"
+          Shot "demo-v3-attached"
 
           $g = @{ init = @(); warn = 99; live = 99; atr = 99; authfail = 99; algoon = 0 }
           if ($elog) {
             $all = Get-Content $elog.FullName
             $g.init = @($all | Select-String 'RivetSkew init (\S+)' | ForEach-Object { $_.Matches[0].Groups[1].Value })
+            $g.pending = @($all | Select-String 'gate pending').Count
             $g.warn = @($all | Select-String 'algo trading not enabled').Count
             $g.live = @($all | Select-String 'LIVE account refused').Count
             $g.atr  = @($all | Select-String 'ATR handle failed').Count
@@ -263,7 +284,7 @@ jobs:
             $g.algoon = @($tall | Select-String 'automated trading is enabled').Count
           }
           $distinct = @($g.init | Sort-Object -Unique).Count
-          Write-Host "RIVETSKEW_INIT: $($g.init.Count) lines syms=[$($g.init -join ',')] distinct=$distinct"
+          Write-Host "RIVETSKEW_INIT: $($g.init.Count) lines syms=[$($g.init -join ',')] distinct=$distinct pending=$($g.pending)"
           Write-Host "ALGO_WARN: $($g.warn) (expected >0 on template route when Ctrl+E lands after chart load)"
           Write-Host "ALGO_ENABLED_LINES: $($g.algoon)"
           Write-Host "LIVE_REFUSED: $($g.live)"
@@ -273,7 +294,8 @@ jobs:
           if ($distinct -ge 4 -and $g.algoon -ge 1 -and $g.live -eq 0 -and $g.atr -eq 0 -and $g.authfail -eq 0) {
             Write-Host "ATTACH_V3_OK"
           } else {
-            Write-Host "ATTACH_V3_FAIL distinct=$distinct algoon=$($g.algoon) warn=$($g.warn) live=$($g.live) atr=$($g.atr) authfail=$($g.authfail)"
+            Write-Host "ATTACH_V3_FAIL distinct=$distinct algoon=$($g.algoon) warn=$($g.warn) pending=$($g.pending) live=$($g.live) atr=$($g.atr) authfail=$($g.authfail)"
+            Shot "demo-v3-final"
             Shot "demo-v3-fail-gates"
             Stop-Process -Name terminal64 -Force -ErrorAction SilentlyContinue
             Remove-Item "$PWD\mt5login.ini" -Force -ErrorAction SilentlyContinue
