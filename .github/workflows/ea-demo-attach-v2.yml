@@ -189,6 +189,29 @@ jobs:
             }
             return $null
           }
+          # MT5 Navigator nodes are NOT in the main window UIA subtree (proven by runs 44093578486/44094814822):
+          # search ladder = Navigator pane HWND descendants -> desktop root process-scoped -> main window
+          $rootEl = [System.Windows.Automation.AutomationElement]::RootElement
+          $procCond = New-Object System.Windows.Automation.PropertyCondition([System.Windows.Automation.AutomationElement]::ProcessIdProperty, $tp.Id)
+          function Find-In-Scopes($regex) {
+            $navElH = 0
+            try { $navElH = $nav.Current.NativeWindowHandle } catch {}
+            if ($navElH -ne 0) {
+              try {
+                $navEl = [System.Windows.Automation.AutomationElement]::FromHandle([IntPtr]$navElH)
+                $hit = Find-Name $navEl $regex
+                if ($hit) { Write-Host "SCOPE nav-pane hit: $($hit.Current.Name)"; return $hit }
+              } catch {}
+            }
+            try {
+              foreach ($el in $rootEl.FindAll([System.Windows.Automation.TreeScope]::Descendants, $procCond)) {
+                try { if ($el.Current.Name -match $regex) { Write-Host "SCOPE root hit: $($el.Current.Name)"; return $el } } catch {}
+              }
+            } catch {}
+            $hit = Find-Name $main $regex
+            if ($hit) { Write-Host "SCOPE main hit: $($hit.Current.Name)" }
+            return $hit
+          }
           $mt = "C:\Program Files\MetaTrader 5"
           $tp = Get-Process terminal64 -ErrorAction Stop | Select-Object -First 1
           $mainH = $tp.MainWindowHandle
@@ -212,20 +235,37 @@ jobs:
           Write-Host "NAV_FOUND $($nav -ne $null)"
           Start-Sleep -Seconds 2
 
-          # 3. Expand Expert Advisors node
-          $exp = Find-Name $main '^Expert Advisors'
+          # 3. Expand Expert Advisors node (UIA ladder first, then measured pixel fallback: node at 66,362, row height 18-19)
+          $exp = Find-In-Scopes '^Expert Advisors'
           if ($exp) {
             $pt = Center-Of $exp
             DblClick-At $pt.X $pt.Y
             Start-Sleep -Seconds 2
-            Write-Host "EXPERTS_NODE dblclicked at $($pt.X),$($pt.Y)"
-          } else { Write-Host "EXPERTS_NODE_MISSING" }
-          $ea = Find-Name $main 'RivetSkewEA'
-          if (-not $ea -and $exp) {
-            $pt = Center-Of $exp
-            DblClick-At $pt.X $pt.Y
+            Write-Host "EXPERTS_NODE dblclicked UIA at $($pt.X),$($pt.Y)"
+          } else {
+            Write-Host "EXPERTS_NODE_UIA_MISS pixel fallback"
+            DblClick-At 66 362
             Start-Sleep -Seconds 2
-            $ea = Find-Name $main 'RivetSkewEA'
+          }
+          Shot "demo-v2-tree"
+          $ea = Find-In-Scopes 'RivetSkewEA'
+          if (-not $ea) {
+            DblClick-At 66 362
+            Start-Sleep -Seconds 2
+            $ea = Find-In-Scopes 'RivetSkewEA'
+          }
+          if (-not $ea) {
+            # blind pixel row: Expert Advisors 362 -> Examples 380 -> RivetSkewEA 398; dialog title gate prevents wrong attach
+            Write-Host "EA_PIXEL_FALLBACK dblclick at 80,398"
+            DblClick-At 80 398
+            Start-Sleep -Seconds 3
+            $fh0 = [W.W4]::GetForegroundWindow()
+            if ($fh0 -ne [IntPtr]::Zero -and $fh0 -ne $mainH -and [W.W4]::IsWindowVisible($fh0)) {
+              try {
+                $fe0 = [System.Windows.Automation.AutomationElement]::FromHandle($fh0)
+                if ($fe0.Current.ProcessId -eq $tp.Id -and $fe0.Current.Name -match 'RivetSkewEA') { Write-Host "EA_PIXEL_DIALOG_OK" } else { Write-Host "EA_PIXEL_DIALOG_REJECT $($fe0.Current.Name)"; [W.W4]::keybd_event(0x1B, 0, 0, [UIntPtr]::Zero); [W.W4]::keybd_event(0x1B, 0, 2, [UIntPtr]::Zero) }
+              } catch {}
+            }
           }
           if (-not $ea) {
             Write-Host "EA_ITEM_MISSING"
@@ -246,7 +286,7 @@ jobs:
           for ($i = 1; $i -le 4; $i++) {
             Focus-Terminal $mainH | Out-Null
             Start-Sleep -Milliseconds 500
-            $ea = Find-Name $main 'RivetSkewEA'
+            $ea = Find-In-Scopes 'RivetSkewEA'
             if (-not $ea) { Write-Host "EA_STALE_GONE attach $i"; Shot "demo-v2-fail-notree$i"; break }
             $pt = Center-Of $ea
             DblClick-At $pt.X $pt.Y
@@ -261,21 +301,32 @@ jobs:
                 } catch {}
               }
             }
-            if (-not $dlg) { Write-Host "DIALOG_GONE attach $i"; Shot "demo-v2-fail-dialog$i" }
-            else {
-              Write-Host "DIALOG$i $($dlg.Current.Name)"
-              $okBtn = Find-Ok-In $dlg
-              if ($okBtn) {
-                $done = $false
-                try { ($okBtn.GetCurrentPattern([System.Windows.Automation.InvokePattern]::Pattern)).Invoke(); $done = $true; Write-Host "ATTACH$i OK invoked" } catch {}
-                if (-not $done) { $pt2 = Center-Of $okBtn; Click-At $pt2.X $pt2.Y; Write-Host "ATTACH$i OK clicked" }
-                Start-Sleep -Seconds 6
-                $attached++
-              } else {
-                Write-Host "OK_BTN_MISSING attach $i"
-                Shot "demo-v2-fail-okbtn$i"
+            if (-not $dlg) {
+              Write-Host "DIALOG_GONE attach $i"
+              Shot "demo-v2-fail-dialog$i"
+            } else {
+              $dname = ''
+              try { $dname = $dlg.Current.Name } catch {}
+              if ($dname -notmatch 'RivetSkewEA') {
+                Write-Host "DIALOG_REJECT$i name=[$dname]"
+                Shot "demo-v2-fail-dialog$i"
                 [W.W4]::keybd_event(0x1B, 0, 0, [UIntPtr]::Zero); [W.W4]::keybd_event(0x1B, 0, 2, [UIntPtr]::Zero)
                 Start-Sleep -Seconds 2
+              } else {
+                Write-Host "DIALOG$i $dname"
+                $okBtn = Find-Ok-In $dlg
+                if ($okBtn) {
+                  $done = $false
+                  try { ($okBtn.GetCurrentPattern([System.Windows.Automation.InvokePattern]::Pattern)).Invoke(); $done = $true; Write-Host "ATTACH$i OK invoked" } catch {}
+                  if (-not $done) { $pt2 = Center-Of $okBtn; Click-At $pt2.X $pt2.Y; Write-Host "ATTACH$i OK clicked" }
+                  Start-Sleep -Seconds 6
+                  $attached++
+                } else {
+                  Write-Host "OK_BTN_MISSING attach $i"
+                  Shot "demo-v2-fail-okbtn$i"
+                  [W.W4]::keybd_event(0x1B, 0, 0, [UIntPtr]::Zero); [W.W4]::keybd_event(0x1B, 0, 2, [UIntPtr]::Zero)
+                  Start-Sleep -Seconds 2
+                }
               }
             }
             if ($i -lt 4) { Focus-Terminal $mainH | Out-Null; Send-Chord 0x09; Start-Sleep -Seconds 4 }
@@ -322,7 +373,7 @@ jobs:
             Focus-Terminal $mainH | Out-Null
             Send-Chord 0x45
             Start-Sleep -Seconds 3
-            $ea = Find-Name $main 'RivetSkewEA'
+            $ea = Find-In-Scopes 'RivetSkewEA'
             if ($ea) {
               $pt = Center-Of $ea
               DblClick-At $pt.X $pt.Y
