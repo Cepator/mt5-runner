@@ -9,7 +9,7 @@
 //| blue trades are trailed so they blossom into few very large wins.|
 //+------------------------------------------------------------------+
 #property copyright "Rivet"
-#property version   "1.00"
+#property version   "1.10"
 #include <Trade/Trade.mqh>
 
 input int    InpDonchianN = 10;    // Donchian lookback (completed weekly bars)
@@ -26,7 +26,38 @@ datetime g_weekBar = 0;
 double   g_initEquity = 0.0;
 bool     g_halted = false;
 bool     g_gatePending = true;   // boot order: charts load BEFORE the trade server connects
+int      g_ticks = 0;            // OnTimer heartbeat counter (v1.10 diagnostics)
 int      g_atr = INVALID_HANDLE;
+
+// v1.10: shared gate logic. OnTimer (2s) AND OnTick (quote stream) both feed it.
+// Run 44128299460 ground truth: title bar logged in + algo on at 16:42:40, ZERO OnTimer
+// prints over 5 min, vision confirmed NO modal anywhere => timer delivery itself suspect
+// on this runner (mid-run mt5onnx64 swap 16:42:36 is the prime suspect). OnTick gives a
+// second, independent event source so live quotes can open the gate even if timers never
+// fire. LIVE-refusal and init-line formats unchanged (collect-lane regex depends on them).
+bool GateCheck()
+{
+   if(!g_gatePending) return true;
+   if(!TerminalInfoInteger(TERMINAL_CONNECTED)) return false;   // still booting, mode not authoritative
+   long mode = AccountInfoInteger(ACCOUNT_TRADE_MODE);
+   if(mode != ACCOUNT_TRADE_MODE_DEMO)
+   {
+      Print("RivetSkew: LIVE account refused. Demo only by owner mandate.");
+      g_gatePending = false;
+      EventKillTimer();
+      ExpertRemove();                                      // INIT_FAILED equivalent: EA never runs on live
+      return true;
+   }
+   g_gatePending = false;
+   EventKillTimer();
+   if(!TerminalInfoInteger(TERMINAL_TRADE_ALLOWED) || !MQLInfoInteger(MQL_TRADE_ALLOWED))
+      Print("RivetSkew: WARN algo trading not enabled yet, waiting.");
+   g_initEquity = AccountInfoDouble(ACCOUNT_EQUITY);
+   g_weekBar = iTime(_Symbol, PERIOD_W1, 0);
+   PrintFormat("RivetSkew init %s equity=%.2f (kill-switch %.0f, dd-halt at %.2f)",
+               _Symbol, g_initEquity, InpMagic, g_initEquity*(1.0-InpMaxDDPct/100.0));
+   return true;
+}
 
 int OnInit()
 {
@@ -37,32 +68,30 @@ int OnInit()
    // Demo gate deferral: run 44103922812 proved OnInit fires ~30s before server connect
    // on template-boot charts, when ACCOUNT_TRADE_MODE is not yet readable (4 false LIVE refusals).
    // Decide on a 2s timer once TERMINAL_CONNECTED is true; refusal semantics unchanged.
-   EventSetTimer(2);
-   Print("RivetSkew: gate pending, account context not readable yet (boot), re-checking on timer");
+   bool tOk = EventSetTimer(2);
+   PrintFormat("RivetSkew: gate pending, boot state: timer_set=%s connected=%s trade_allowed=%s",
+               tOk ? "true" : "false",
+               TerminalInfoInteger(TERMINAL_CONNECTED) ? "true" : "false",
+               TerminalInfoInteger(TERMINAL_TRADE_ALLOWED) ? "true" : "false");
+   GateCheck();   // v1.10: if the EA loads while already connected, pass the gate immediately
    return INIT_SUCCEEDED;
 }
 
 void OnTimer()
 {
-   if(!g_gatePending) return;
-   if(!TerminalInfoInteger(TERMINAL_CONNECTED)) return;   // still booting, mode not authoritative
-   long mode = AccountInfoInteger(ACCOUNT_TRADE_MODE);
-   if(mode != ACCOUNT_TRADE_MODE_DEMO)
-   {
-      Print("RivetSkew: LIVE account refused. Demo only by owner mandate.");
-      g_gatePending = false;
-      EventKillTimer();
-      ExpertRemove();                                      // INIT_FAILED equivalent: EA never runs on live
-      return;
-   }
-   g_gatePending = false;
-   EventKillTimer();
-   if(!TerminalInfoInteger(TERMINAL_TRADE_ALLOWED) || !MQLInfoInteger(MQL_TRADE_ALLOWED))
-      Print("RivetSkew: WARN algo trading not enabled yet, waiting.");
-   g_initEquity = AccountInfoDouble(ACCOUNT_EQUITY);
-   g_weekBar = iTime(_Symbol, PERIOD_W1, 0);
-   PrintFormat("RivetSkew init %s equity=%.2f (kill-switch %.0f, dd-halt at %.2f)",
-               _Symbol, g_initEquity, InpMagic, g_initEquity*(1.0-InpMaxDDPct/100.0));
+   g_ticks++;
+   // v1.10 heartbeat: 44128299460 died with ZERO OnTimer prints while all gate conditions
+   // were visibly true. First tick prints unconditionally, then every 20th tick, so the
+   // collect lane can tell "timer dead" from "gate blocked" from the journal alone.
+   if(g_ticks == 1 || g_ticks % 20 == 0)
+      PrintFormat("RivetSkew: heartbeat tick=%d connected=%s", g_ticks,
+                  TerminalInfoInteger(TERMINAL_CONNECTED) ? "true" : "false");
+   GateCheck();
+}
+
+void OnTick()
+{
+   GateCheck();   // v1.10: quote-driven gate path, independent of timer delivery
 }
 
 void OnDeinit(const int reason) { PrintFormat("RivetSkew deinit reason=%d", reason); }

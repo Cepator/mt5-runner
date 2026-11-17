@@ -247,7 +247,7 @@ jobs:
             }
             return $false
           }
-          $luGone = Dismiss-LiveUpdate 90
+          $luGone = Dismiss-LiveUpdate 240
           Write-Host "LIVEUPDATE_CLEARED $luGone"
 
           # Algo Trading ON (fresh runner always boots OFF; EA may have already inited with a warn, which this route tolerates)
@@ -255,87 +255,62 @@ jobs:
           Start-Sleep -Seconds 3
           Write-Host "ALGO Ctrl+E sent"
 
+          # v3.6 (16:50 MAIN directive): REMOVE the in-run success gate entirely. Every prior
+          # gate death was an in-run race: LiveUpdate modal (44124360647), update DLL swap
+          # starving EA events with NO modal visible (44128299460: logged in + algo on at
+          # 16:42:40, zero OnTimer prints over 5 min), gate/timing bugs. Sequence: boot ->
+          # dedicated dismiss window -> Ctrl+E once -> QUIET 300s (no polling, no
+          # interaction) -> harvest evidence -> exit 0 ALWAYS. The collect lane judges
+          # success OFFLINE from the harvested experts journal (>=4 distinct init symbols).
+          Start-Sleep -Seconds 300
+
+          # Harvest everything the offline verdict needs
           function Copy-Journals {
             $l = Get-ChildItem "$mt\logs" -Filter *.log -ErrorAction SilentlyContinue | Where-Object { $_.Name -match '^\d{8}\.log$' } | Sort-Object LastWriteTime -Descending | Select-Object -First 1
             if ($l) { Copy-Item $l.FullName "$PWD\terminal-journal.log" -Force; $script:logPath = $l.FullName }
             $el = Get-ChildItem "$mt\MQL5\Logs" -Filter *.log -ErrorAction SilentlyContinue | Where-Object { $_.Name -match '^\d{8}\.log$' } | Sort-Object LastWriteTime -Descending | Select-Object -First 1
             if ($el) { Copy-Item $el.FullName "$PWD\experts-journal.log" -Force; $script:elogPath = $el.FullName }
           }
-          function Read-Distinct-Inits {
-            if (-not (Test-Path "$PWD\experts-journal.log")) { return 0 }
-            $raw = Get-Content "$PWD\experts-journal.log" -ErrorAction SilentlyContinue
-            return @(($raw | Select-String 'RivetSkew init (\S+)' | ForEach-Object { $_.Matches[0].Groups[1].Value }) | Sort-Object -Unique).Count
-          }
-
-          # Poll for gate pass: template-boot EA inits only AFTER the trade server connects,
-          # which can land 2-4 min post-boot (run 44105459198: still pending at the old fixed 95s grab).
-          # v3.4: gate window extended to 300s per banked REMEDY B (15:55 MAIN) - first-boot
-          # LiveUpdate + 131-file recompile latency measured on run 44118970236 (journal 15:52:48).
-          # v3.5: per-iteration LiveUpdate modal guard (run 44124360647: the Restart/Later modal popped
-          # 3s AFTER the one-shot guard cleared and blocked EA event delivery for the entire poll;
-          # market data kept flowing so nothing else looked wrong) + terminal journal tail diagnostic.
-          $pollDeadline = (Get-Date).AddSeconds(300)
-          $distinct = 0
-          while ((Get-Date) -lt $pollDeadline) {
-            Copy-Journals
-            $distinct = Read-Distinct-Inits
-            Dismiss-LiveUpdate 1 | Out-Null
-            $tl = $null
-            if ($script:logPath) { $tl = Get-Content $script:logPath -Tail 1 -ErrorAction SilentlyContinue }
-            Write-Host "POLL $(Get-Date -Format HH:mm:ss) distinct_inits=$distinct tlog=$tl"
-            if ($distinct -ge 4) { break }
-            Start-Sleep -Seconds 10
-          }
-          Write-Host "terminal still alive: $(-not (Get-Process terminal64 -ErrorAction SilentlyContinue).HasExited)"
-          Start-Sleep -Seconds 10
           Copy-Journals
           $log = $script:logPath
           $elog = $script:elogPath
           if ($log) { Write-Host "journal: $log" } else { Write-Host "NO_TERMINAL_JOURNAL" }
           if ($elog) { Write-Host "experts log: $elog" } else { Write-Host "NO_EXPERTS_JOURNAL" }
           Copy-Item "$mt\MQL5\Experts\compile.log" "$PWD\compile.log" -Force -ErrorAction SilentlyContinue
-          Shot "demo-v3-attached"
+          Shot "demo-v3-final"
 
-          $g = @{ init = @(); warn = 99; live = 99; atr = 99; authfail = 99; algoon = 0 }
-          # v3.5 FIX: $script:logPath/$script:elogPath are STRINGS (full paths). v3.4 called
-          # Get-Content $elog.FullName on them -> null -> every final gate count silently zeroed
-          # even when the poll had already seen inits (run 44124360647 Get-Content bind errors).
+          # Diagnostics only - the verdict happens OFFLINE in the collect lane; this step
+          # never exits nonzero (v3.6: no in-run gate can fail if there is no in-run gate)
           if ($elog) {
             $all = Get-Content $elog
-            $g.init = @($all | Select-String 'RivetSkew init (\S+)' | ForEach-Object { $_.Matches[0].Groups[1].Value })
-            $g.pending = @($all | Select-String 'gate pending').Count
-            $g.warn = @($all | Select-String 'algo trading not enabled').Count
-            $g.live = @($all | Select-String 'LIVE account refused').Count
-            $g.atr  = @($all | Select-String 'ATR handle failed').Count
+            $inits = @($all | Select-String 'RivetSkew init (\S+)' | ForEach-Object { $_.Matches[0].Groups[1].Value })
+            $distinct = @($inits | Sort-Object -Unique).Count
+            Write-Host "RIVETSKEW_INIT: $($inits.Count) lines syms=[$($inits -join ',')] distinct=$distinct"
+            Write-Host "GATE_PENDING_LINES: $(@($all | Select-String 'gate pending').Count)"
+            Write-Host "HEARTBEAT_LINES: $(@($all | Select-String 'heartbeat tick=').Count)"
+            Write-Host "BOOT_STATE_LINES: $(@($all | Select-String 'boot state:').Count)"
+            Write-Host "LIVE_REFUSED: $(@($all | Select-String 'LIVE account refused').Count)"
+            Write-Host "ALGO_WARN: $(@($all | Select-String 'algo trading not enabled').Count)"
           }
           if ($log) {
             $tall = Get-Content $log
-            $g.authfail = @($tall | Select-String 'authorization failed|invalid account|bad login').Count
-            $g.algoon = @($tall | Select-String 'automated trading is enabled').Count
+            Write-Host "ALGO_ENABLED_LINES: $(@($tall | Select-String 'automated trading is enabled').Count)"
+            Write-Host "AUTH_FAIL: $(@($tall | Select-String 'authorization failed|invalid account|bad login').Count)"
           }
-          $distinct = @($g.init | Sort-Object -Unique).Count
-          Write-Host "RIVETSKEW_INIT: $($g.init.Count) lines syms=[$($g.init -join ',')] distinct=$distinct pending=$($g.pending)"
-          Write-Host "ALGO_WARN: $($g.warn) (expected >0 on template route when Ctrl+E lands after chart load)"
-          Write-Host "ALGO_ENABLED_LINES: $($g.algoon)"
-          Write-Host "LIVE_REFUSED: $($g.live)"
-          Write-Host "ATR_FAIL: $($g.atr)"
-          Write-Host "AUTH_FAIL: $($g.authfail)"
-
-          if ($distinct -ge 4 -and $g.algoon -ge 1 -and $g.live -eq 0 -and $g.atr -eq 0 -and $g.authfail -eq 0) {
-            Write-Host "ATTACH_V3_OK"
-          } else {
-            Write-Host "ATTACH_V3_FAIL distinct=$distinct algoon=$($g.algoon) warn=$($g.warn) pending=$($g.pending) live=$($g.live) atr=$($g.atr) authfail=$($g.authfail)"
-            Shot "demo-v3-final"
-            Shot "demo-v3-fail-gates"
-            Stop-Process -Name terminal64 -Force -ErrorAction SilentlyContinue
-            Remove-Item "$PWD\mt5login.ini" -Force -ErrorAction SilentlyContinue
-            exit 1
-          }
+          Write-Host "HARVEST_DONE v3.6 (exit 0 unconditional, verdict offline)"
 
           # graceful close so the terminal re-saves the profile WITH the EA attached (persistence proof)
           $tp.CloseMainWindow() | Out-Null
           Start-Sleep -Seconds 20
           Stop-Process -Name terminal64 -Force -ErrorAction SilentlyContinue
+          # v3.6: common.ini harvested AFTER close - the terminal persists its full state
+          # (incl. ExpertEnable) at shutdown; harvesting pre-close would miss it (16:50 MAIN
+          # rider: decides whether a future cycle can pre-arm algo in the seeded profile)
+          Copy-Item "$mt\config\common.ini" "$PWD\common.ini" -Force -ErrorAction SilentlyContinue
+          if (-not (Test-Path "$PWD\common.ini")) {
+            Get-ChildItem "$env:APPDATA\MetaQuotes\Terminal" -Recurse -Filter common.ini -ErrorAction SilentlyContinue | Select-Object -First 1 | ForEach-Object { Copy-Item $_.FullName "$PWD\common.ini" -Force -ErrorAction SilentlyContinue }
+          }
+          if (Test-Path "$PWD\common.ini") { Write-Host "COMMON_INI harvested" } else { Write-Host "NO_COMMON_INI" }
           Remove-Item "$PWD\mt5login.ini" -Force -ErrorAction SilentlyContinue
 
       - name: Upload demo evidence v3
@@ -348,3 +323,4 @@ jobs:
             terminal-journal.log
             experts-journal.log
             compile.log
+            common.ini
