@@ -321,11 +321,11 @@ jobs:
           }
           function TV-Children($tv, $h) {
             $out = @()
-            $c = [TW]::SendMessage($tv, 0x110A, [IntPtr]2, $h)
+            $c = [TW]::SendMessage($tv, 0x110A, [IntPtr]4, $h)
             while ($c -ne [IntPtr]::Zero) { $out += $c; $c = [TW]::SendMessage($tv, 0x110A, [IntPtr]1, $c) }
             return $out
           }
-          $hRoot = [TW]::SendMessage($tvH, 0x110A, [IntPtr]4, [IntPtr]::Zero)
+          $hRoot = [TW]::SendMessage($tvH, 0x110A, [IntPtr]0, [IntPtr]::Zero)
           Write-Host "TV_ROOT $hRoot"
           $kids = TV-Children $tvH $hRoot
           Write-Host "TV_ROOT_CHILDREN $($kids.Count)"
