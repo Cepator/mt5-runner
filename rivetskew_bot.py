@@ -42,24 +42,40 @@ def bail(code, msg):
     log(f"FATAL {msg}")
     sys.exit(code)
 
+def terminal_alive():
+    """True if terminal64.exe is still running (tasklist check); unverifiable
+    states return True so the retry ladder keeps going."""
+    try:
+        import subprocess
+        r = subprocess.run(["tasklist", "/FI", "IMAGENAME eq terminal64.exe"],
+                           capture_output=True, text=True, timeout=15)
+        return "terminal64.exe" in (r.stdout or "")
+    except Exception:
+        return True
+
 def connect_mt5():
-    """Initialize with explicit terminal path + login credentials, retrying
-    while a freshly installed terminal finishes its first boot: the known
-    failure is (-10005, 'IPC timeout') when python connects before the
-    terminal is fully up (MQL5 forum 447937 pattern)."""
+    """Initialize with explicit terminal path + PORTABLE MODE + login
+    credentials, retrying while a freshly installed terminal settles. The
+    terminal boots /portable (data folder = install dir); initialize MUST pass
+    portable=True or the module handshakes against the main-mode AppData data
+    folder, empty on a fresh runner, and every attempt dies with
+    (-10005, 'IPC timeout') - root cause of runs 44107726289 + 44111389179
+    (module wheel 5.0.6231: -10005 is the raw handshake timeout; the
+    algo-disabled case is error -8, which we are NOT seeing)."""
     login = os.environ.get("MT5_DEMO_LOGIN")
     password = os.environ.get("MT5_DEMO_PASSWORD")
     server = os.environ.get("MT5_DEMO_SERVER")
     last_err = None
     for attempt in range(1, 7):
-        kwargs = {"path": MT5_PATH}
+        kwargs = {"path": MT5_PATH, "portable": True, "timeout": 60000}
         if login and password and server:
             kwargs.update(login=int(login), password=password, server=server)
         if mt5.initialize(**kwargs):
             log(f"mt5.initialize OK on attempt {attempt}, terminal build={mt5.version()}")
             return
         last_err = mt5.last_error()
-        log(f"mt5.initialize attempt {attempt}/6 failed, last_error={last_err}")
+        log(f"mt5.initialize attempt {attempt}/6 failed (terminal64 "
+            f"{'alive' if terminal_alive() else 'GONE'}), last_error={last_err}")
         mt5.shutdown()
         time.sleep(15)
     bail(2, f"mt5.initialize failed after 6 attempts, last_error={last_err}")

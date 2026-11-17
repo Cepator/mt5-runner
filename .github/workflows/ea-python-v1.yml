@@ -53,6 +53,20 @@ jobs:
           [W.W1]::keybd_event(0x11, 0, 2, [UIntPtr]::Zero)
           Start-Sleep -Seconds 5
           Write-Host "terminal64 process: $(if (Get-Process terminal64 -ErrorAction SilentlyContinue) {'alive'} else {'GONE'})"
+          # ground-truth diagnostic: portable data folder journal = install dir\logs\YYYYMMDD.log
+          # (redact secret values before printing any journal line)
+          $jl = Get-ChildItem "$mt\logs" -Filter *.log -ErrorAction SilentlyContinue | Sort-Object LastWriteTime -Descending | Select-Object -First 1
+          if ($jl) {
+            Write-Host "journal: $($jl.Name) ($($jl.Length) bytes)"
+            Get-Content $jl.FullName -Tail 25 | ForEach-Object {
+              $red = $_ -replace $env:MT5_DEMO_LOGIN, '***' -replace $env:MT5_DEMO_PASSWORD, '***' -replace $env:MT5_DEMO_SERVER, '***'
+              Write-Host "J| $red"
+            }
+            $algoOn = Select-String -Path $jl.FullName -Pattern 'automated trading is enabled' -Quiet
+            Write-Host "journal algo-enabled line present: $algoOn"
+          } else {
+            Write-Host "journal: NO log file in $mt\logs (portable data folder missing journals?)"
+          }
 
       - name: Run RivetSkew python bot
         shell: pwsh
