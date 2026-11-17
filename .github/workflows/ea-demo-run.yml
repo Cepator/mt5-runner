@@ -129,12 +129,19 @@ jobs:
           $log = Get-ChildItem "$mt\logs" -Filter *.log | Sort-Object LastWriteTime -Descending | Select-Object -First 1
           if ($log) {
             Write-Host "journal: $($log.FullName)"
-            $lines = Get-Content $log.FullName -Tail 60
-            $lines | ForEach-Object { Write-Host "J| $_" }
-            Write-Host "RIVETSKEW_INIT: $((($lines | Select-String 'RivetSkew init') | Measure-Object).Count) lines"
-            Write-Host "ALGO_WARN: $((($lines | Select-String 'algo trading not enabled') | Measure-Object).Count) lines"
-            Write-Host "AUTH_FAIL: $((($lines | Select-String 'authorization failed|invalid account|bad login') | Measure-Object).Count) lines"
+            Copy-Item $log.FullName "$PWD\terminal-journal.log" -Force
+            $all = Get-Content $log.FullName
+            foreach ($pat in @('RivetSkew init','algo trading not enabled','authorization failed','invalid account','bad login','authorized','Login','network','connected','debugger')) {
+              $hits = $all | Select-String $pat
+              Write-Host "GATE $pat : $(($hits | Measure-Object).Count)"
+              $hits | Select-Object -First 6 | ForEach-Object { Write-Host "G| $_" }
+            }
+            Write-Host "RIVETSKEW_INIT: $((($all | Select-String 'RivetSkew init') | Measure-Object).Count) lines"
           } else { Write-Host "NO_JOURNAL" }
+          Copy-Item "$mt\MQL5\Experts\compile.log" "$PWD\compile.log" -Force -ErrorAction SilentlyContinue
+          foreach ($f in @('demo-v1-40s.png','demo-v1-100s.png')) {
+            if (-not (Test-Path $f)) { Write-Host "SHOT_MISSING $f" }
+          }
           Stop-Process -Name terminal64 -Force -ErrorAction SilentlyContinue
           Remove-Item $iniPath -Force -ErrorAction SilentlyContinue
 
@@ -142,7 +149,8 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: rivetskew-demo-v1
+          name: rivetskew-demo-v2
           path: |
             demo-v1-*.png
-            C:\Program Files\MetaTrader 5\MQL5\Experts\compile.log
+            terminal-journal.log
+            compile.log
