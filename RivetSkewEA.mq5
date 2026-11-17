@@ -25,26 +25,44 @@ CTrade   trade;
 datetime g_weekBar = 0;
 double   g_initEquity = 0.0;
 bool     g_halted = false;
+bool     g_gatePending = true;   // boot order: charts load BEFORE the trade server connects
 int      g_atr = INVALID_HANDLE;
 
 int OnInit()
 {
-   if((ENUM_ACCOUNT_TRADE_MODE)AccountInfoInteger(ACCOUNT_TRADE_MODE) != ACCOUNT_TRADE_MODE_DEMO)
-   {
-      Print("RivetSkew: LIVE account refused. Demo only by owner mandate.");
-      return INIT_FAILED;
-   }
-   if(!TerminalInfoInteger(TERMINAL_TRADE_ALLOWED) || !MQLInfoInteger(MQL_TRADE_ALLOWED))
-      Print("RivetSkew: WARN algo trading not enabled yet, waiting.");
    trade.SetExpertMagicNumber(InpMagic);
    trade.SetDeviationInPoints(25);
    g_atr = iATR(_Symbol, PERIOD_W1, InpATRPeriod);
    if(g_atr == INVALID_HANDLE) { Print("RivetSkew: ATR handle failed"); return INIT_FAILED; }
+   // Demo gate deferral: run 44103922812 proved OnInit fires ~30s before server connect
+   // on template-boot charts, when ACCOUNT_TRADE_MODE is not yet readable (4 false LIVE refusals).
+   // Decide on a 2s timer once TERMINAL_CONNECTED is true; refusal semantics unchanged.
+   EventSetTimer(2);
+   Print("RivetSkew: gate pending, account context not readable yet (boot), re-checking on timer");
+   return INIT_SUCCEEDED;
+}
+
+void OnTimer()
+{
+   if(!g_gatePending) return;
+   if(!TerminalInfoInteger(TERMINAL_CONNECTED)) return;   // still booting, mode not authoritative
+   long mode = AccountInfoInteger(ACCOUNT_TRADE_MODE);
+   if(mode != ACCOUNT_TRADE_MODE_DEMO)
+   {
+      Print("RivetSkew: LIVE account refused. Demo only by owner mandate.");
+      g_gatePending = false;
+      EventKillTimer();
+      ExpertRemove();                                      // INIT_FAILED equivalent: EA never runs on live
+      return;
+   }
+   g_gatePending = false;
+   EventKillTimer();
+   if(!TerminalInfoInteger(TERMINAL_TRADE_ALLOWED) || !MQLInfoInteger(MQL_TRADE_ALLOWED))
+      Print("RivetSkew: WARN algo trading not enabled yet, waiting.");
    g_initEquity = AccountInfoDouble(ACCOUNT_EQUITY);
    g_weekBar = iTime(_Symbol, PERIOD_W1, 0);
    PrintFormat("RivetSkew init %s equity=%.2f (kill-switch %.0f, dd-halt at %.2f)",
                _Symbol, g_initEquity, InpMagic, g_initEquity*(1.0-InpMaxDDPct/100.0));
-   return INIT_SUCCEEDED;
 }
 
 void OnDeinit(const int reason) { PrintFormat("RivetSkew deinit reason=%d", reason); }
@@ -164,7 +182,7 @@ void TryEntry()
 
 void OnTick()
 {
-   if(g_halted) return;
+   if(g_gatePending || g_halted) return;
    double eq = AccountInfoDouble(ACCOUNT_EQUITY);
    if(g_initEquity > 0.0 && eq <= g_initEquity * (1.0 - InpMaxDDPct / 100.0))
    {
