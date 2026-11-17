@@ -97,9 +97,10 @@ jobs:
           $wnd = "chart01.chr`r`nchart02.chr`r`nchart03.chr`r`nchart04.chr`r`n"
           [System.IO.File]::WriteAllText("$env:TEMP\order.wnd", $wnd, $enc)
           $base = "$mt\MQL5\Profiles\Charts"
-          $targets = @()
+          # official docs: the boot profile is read from Charts\Default subdirectory (v2b/v2c seeded only template dirs and boot ignored them)
+          $targets = @("$base\Default")
           $def = Get-ChildItem $base -Directory -ErrorAction SilentlyContinue | Where-Object { Test-Path (Join-Path $_.FullName "order.wnd") } | Select-Object -First 1
-          if ($def) { $targets += $def.FullName; Write-Host "default profile dir: $($def.FullName)" }
+          if ($def -and $def.FullName -ne "$base\Default") { $targets += $def.FullName; Write-Host "existing profile dir: $($def.FullName)" }
           $targets += "$base\RivetSkew"
           foreach ($t in $targets) {
             New-Item -ItemType Directory -Force $t | Out-Null
@@ -264,50 +265,113 @@ jobs:
           Write-Host "NAV_FOUND $($nav -ne $null)"
           Start-Sleep -Seconds 2
 
-          # 3. Locate RivetSkewEA via keyboard tree navigation (measured geometry: Expert Advisors row 75,346; strip at y 383; child rows push below so the tree must auto-scroll via selection)
-          # single click selects the row (survey: MetaTrader 5 y281, Accounts 306, Indicators 327, Expert Advisors 346, Scripts 365)
-          Click-At 75 346
-          Start-Sleep -Milliseconds 800
-          $selOk = $false
-          try { $feS = [System.Windows.Automation.AutomationElement]::FocusedElement; if ($feS -and $feS.Current.Name -match 'Expert Advisors') { $selOk = $true; Write-Host "SELECTION_VERIFIED $($feS.Current.Name)" } } catch {}
-          if (-not $selOk) { Write-Host "SELECTION_UNVERIFIED proceeding"; Shot "demo-v2-selfail" }
-          # RIGHT expands collapsed node (no-op toggle risk: never dblclick the node)
-          [W.W4]::keybd_event(0x27, 0, 0, [UIntPtr]::Zero); [W.W4]::keybd_event(0x27, 0, 2, [UIntPtr]::Zero)
-          Start-Sleep -Seconds 2
-          # DOWN into children: Examples then RivetSkewEA; tree scrolls selection into view
-          [W.W4]::keybd_event(0x28, 0, 0, [UIntPtr]::Zero); [W.W4]::keybd_event(0x28, 0, 2, [UIntPtr]::Zero)
-          Start-Sleep -Milliseconds 700
-          [W.W4]::keybd_event(0x28, 0, 0, [UIntPtr]::Zero); [W.W4]::keybd_event(0x28, 0, 2, [UIntPtr]::Zero)
-          Start-Sleep -Milliseconds 800
-          Shot "demo-v2-tree"
-          $eaPt = $null
-          $ea = Find-In-Scopes 'RivetSkewEA'
-          if ($ea) { $eaPt = Center-Of $ea }
-          if (-not $eaPt) {
-            try {
-              $feF = [System.Windows.Automation.AutomationElement]::FocusedElement
-              if ($feF -and $feF.Current.Name -match 'RivetSkewEA') { $eaPt = Center-Of $feF; Write-Host "EA via focused element" }
-            } catch {}
+          # 3. Locate RivetSkewEA via the Win32 TreeView API (UIA never exposes MT5 tree nodes; pixels drift). Structure-verified:
+          #    root children per official layout = Accounts, Indicators, Expert Advisors, Scripts; the node that expands to EXACTLY 2 children is Expert Advisors;
+          #    of those 2, the LEAF (0 children) is RivetSkewEA (the other is the shipped Examples folder with subfolders).
+          Add-Type -TypeDefinition @'
+          using System;
+          using System.Runtime.InteropServices;
+          using System.Text;
+          public class TW {
+            public delegate bool EnumProc(IntPtr h, IntPtr l);
+            [DllImport("user32.dll", SetLastError=true)] public static extern IntPtr FindWindowEx(IntPtr parent, IntPtr child, string cls, string win);
+            [DllImport("user32.dll")] public static extern bool EnumChildWindows(IntPtr p, EnumProc cb, IntPtr l);
+            [DllImport("user32.dll", CharSet=CharSet.Auto)] public static extern int GetClassName(IntPtr h, StringBuilder s, int n);
+            [DllImport("user32.dll")] public static extern IntPtr SendMessage(IntPtr h, uint m, IntPtr w, IntPtr l);
+            [DllImport("user32.dll", EntryPoint="SendMessage")] public static extern IntPtr SendMessageRect(IntPtr h, uint m, IntPtr w, ref RECT l);
+            [StructLayout(LayoutKind.Sequential)] public struct RECT { public int L; public int T; public int R; public int B; }
           }
-          if (-not $eaPt) {
-            # blind last resort: selected row sits near panel bottom above strip; dialog title gate prevents wrong attach
-            Write-Host "EA_BLIND_ROW 85,367"
-            $eaPt = New-Object System.Windows.Point 85, 367
+          '@
+          $navH = 0
+          try { $navH = $nav.Current.NativeWindowHandle } catch {}
+          Write-Host "NAV_HWND $navH"
+          $tvH = [IntPtr]::Zero
+          if ($navH -ne 0) {
+            $tvH = [TW]::FindWindowEx([IntPtr]$navH, [IntPtr]::Zero, "SysTreeView32", $null)
+            Write-Host "TV_DIRECT $tvH"
           }
-          Write-Host "EA_ROW_AT $($eaPt.X),$($eaPt.Y)"
-          if (-not ($ea -or $eaPt)) {
-            Write-Host "EA_ITEM_MISSING"
-            Shot "demo-v2-fail-notree"
+          $classes = New-Object System.Collections.Generic.List[string]
+          if ($tvH -eq [IntPtr]::Zero -and $navH -ne 0) {
+            $cb = [TW+EnumProc]{ param($h, $l)
+              $sb = New-Object System.Text.StringBuilder 256
+              [TW]::GetClassName($h, $sb, 256) | Out-Null
+              $script:classes.Add($sb.ToString())
+              if ($sb.ToString() -match 'SysTreeView') { $script:tvFound = $h }
+              return $true
+            }
+            $script:tvFound = [IntPtr]::Zero
+            [TW]::EnumChildWindows([IntPtr]$navH, $cb, [IntPtr]::Zero) | Out-Null
+            $tvH = $script:tvFound
+            Write-Host "NAV_CHILD_CLASSES $($classes -join ',')"
+          }
+          function Save-Evidence {
             $log2 = Get-ChildItem "$mt\logs" -Filter *.log -ErrorAction SilentlyContinue | Where-Object { $_.Name -match '^\d{8}\.log$' } | Sort-Object LastWriteTime -Descending | Select-Object -First 1
             if ($log2) { Copy-Item $log2.FullName "$PWD\terminal-journal.log" -Force }
             $elog2 = Get-ChildItem "$mt\MQL5\Logs" -Filter *.log -ErrorAction SilentlyContinue | Where-Object { $_.Name -match '^\d{8}\.log$' } | Sort-Object LastWriteTime -Descending | Select-Object -First 1
             if ($elog2) { Copy-Item $elog2.FullName "$PWD\experts-journal.log" -Force }
             Copy-Item "$mt\MQL5\Experts\compile.log" "$PWD\compile.log" -Force -ErrorAction SilentlyContinue
+          }
+          if ($tvH -eq [IntPtr]::Zero) {
+            Write-Host "TREEVIEW_NOT_FOUND"
+            Shot "demo-v2-fail-notv"
+            Save-Evidence
             Stop-Process -Name terminal64 -Force -ErrorAction SilentlyContinue
             Remove-Item "$PWD\mt5login.ini" -Force -ErrorAction SilentlyContinue
             exit 1
           }
-          Write-Host "EA_READY pt=$($eaPt.X),$($eaPt.Y) uia=$($ea -ne $null)"
+          function TV-Children($tv, $h) {
+            $out = @()
+            $c = [TW]::SendMessage($tv, 0x110A, [IntPtr]2, $h)
+            while ($c -ne [IntPtr]::Zero) { $out += $c; $c = [TW]::SendMessage($tv, 0x110A, [IntPtr]1, $c) }
+            return $out
+          }
+          $hRoot = [TW]::SendMessage($tvH, 0x110A, [IntPtr]4, [IntPtr]::Zero)
+          Write-Host "TV_ROOT $hRoot"
+          $kids = TV-Children $tvH $hRoot
+          Write-Host "TV_ROOT_CHILDREN $($kids.Count)"
+          $expH = [IntPtr]::Zero; $gkids = @()
+          foreach ($k in $kids) {
+            [TW]::SendMessage($tvH, 0x1102, [IntPtr]2, $k) | Out-Null
+            Start-Sleep -Milliseconds 500
+            $g = TV-Children $tvH $k
+            Write-Host "TV_NODE $k children=$($g.Count)"
+            if ($g.Count -eq 2 -and $expH -eq [IntPtr]::Zero) { $expH = $k; $gkids = $g }
+          }
+          if ($expH -eq [IntPtr]::Zero) {
+            Write-Host "EA_STRUCT_FAIL"
+            Shot "demo-v2-fail-struct"
+            Save-Evidence
+            Stop-Process -Name terminal64 -Force -ErrorAction SilentlyContinue
+            Remove-Item "$PWD\mt5login.ini" -Force -ErrorAction SilentlyContinue
+            exit 1
+          }
+          $leaf = [IntPtr]::Zero
+          foreach ($g in $gkids) { if ((TV-Children $tvH $g).Count -eq 0) { $leaf = $g } }
+          if ($leaf -eq [IntPtr]::Zero) {
+            Write-Host "EA_LEAF_FAIL"
+            Shot "demo-v2-fail-leaf"
+            Save-Evidence
+            Stop-Process -Name terminal64 -Force -ErrorAction SilentlyContinue
+            Remove-Item "$PWD\mt5login.ini" -Force -ErrorAction SilentlyContinue
+            exit 1
+          }
+          [TW]::SendMessage($tvH, 0x110B, [IntPtr]9, $leaf) | Out-Null
+          Start-Sleep -Milliseconds 600
+          $rc = New-Object TW+RECT
+          $vis = [TW]::SendMessageRect($tvH, 0x1104, [IntPtr]1, [ref]$rc)
+          Write-Host "EA_RECT $($rc.L),$($rc.T) - $($rc.R),$($rc.B) vis=$vis"
+          if ($vis -eq [IntPtr]::Zero) {
+            Write-Host "EA_RECT_FAIL"
+            Shot "demo-v2-fail-rect"
+            Save-Evidence
+            Stop-Process -Name terminal64 -Force -ErrorAction SilentlyContinue
+            Remove-Item "$PWD\mt5login.ini" -Force -ErrorAction SilentlyContinue
+            exit 1
+          }
+          $eaPtX = [int](($rc.L + $rc.R) / 2)
+          $eaPtY = [int](($rc.T + $rc.B) / 2)
+          Shot "demo-v2-tree"
+          Write-Host "EA_READY pt=$eaPtX,$eaPtY"
 
           # 4. Attach on each chart tab (attach, Ctrl+Tab) x4, re-find element each loop (stale guard)
           $attached = 0
@@ -317,7 +381,7 @@ jobs:
             Start-Sleep -Milliseconds 300
             $ea = Find-In-Scopes 'RivetSkewEA'
             if ($ea) { $eaPt = Center-Of $ea; Write-Host "EA_REFOUND $($eaPt.X),$($eaPt.Y)" }
-            DblClick-At $eaPt.X $eaPt.Y
+            DblClick-At $eaPtX $eaPtY
             $dlg = $null
             for ($w = 0; $w -lt 12; $w++) {
               Start-Sleep -Seconds 1
@@ -409,11 +473,7 @@ jobs:
             Focus-Terminal $mainH | Out-Null
             Send-Chord 0x45
             Start-Sleep -Seconds 3
-            $ea = Find-In-Scopes 'RivetSkewEA'
-            if ($ea) { $eaPt = Center-Of $ea }
-            if ($ea) {
-              $pt = Center-Of $ea
-              DblClick-At $pt.X $pt.Y
+            DblClick-At $eaPtX $eaPtY
               for ($w = 0; $w -lt 10; $w++) {
                 Start-Sleep -Seconds 1
                 $fh = [W.W4]::GetForegroundWindow()
@@ -431,7 +491,6 @@ jobs:
               $g2 = Read-Gates
               Write-Host "RECOVERY_GATES init=$($g2.init.Count) warn=$($g2.warn)"
               if ($g2.init.Count -gt $g.init.Count -and $g2.warn -eq $g.warn) { $recovered = $true }
-            }
           }
 
           if ($attached -eq 4 -and $distinct -ge 4 -and ($g.warn -eq 0 -or $recovered) -and $g.live -eq 0 -and $g.atr -eq 0 -and $g.authfail -eq 0) {
