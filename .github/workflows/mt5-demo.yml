@@ -2,8 +2,6 @@ name: MT5 demo session
 
 on:
   workflow_dispatch: {}
-  schedule:
-    - cron: "0 8 * * 1-5"
 
 jobs:
   mt5:

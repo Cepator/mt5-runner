@@ -10,9 +10,6 @@ on:
       entries:
         description: "1 = allow new entries, 0 = trail management only"
         default: "1"
-  schedule:
-    - cron: "5 6 * * *"    # daily 06:05 UTC, pre-Sydney open, trails only
-    - cron: "5 22 * * 0"   # Sunday 22:05 UTC, new-week entries
 
 jobs:
   bot:
